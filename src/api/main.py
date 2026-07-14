@@ -11,6 +11,7 @@ from src.urdf_generator.samples import two_link_arm
 from src.simulation.runner import run_smoke_test
 from src.analysis.torque_check import compute_static_torques
 from src.simulation.lift_test import run_lift_test
+from src.ai_layer.report_generator import generate_report
 
 app = FastAPI(title="Robot Sim API")
 
@@ -66,5 +67,30 @@ def demo_two_link_arm_lift_test():
         config = two_link_arm()
         result = run_lift_test(config)
         return {"config_name": config.name, "lift_test": result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/demo/two-link-arm/report")
+def demo_two_link_arm_report():
+    """
+    Full pipeline: real static torque check + real dynamic lift test,
+    both fed to the LLM as data, which writes a plain-English design
+    review grounded strictly in those numbers. Requires ANTHROPIC_API_KEY
+    to be set in the environment.
+    """
+    try:
+        config = two_link_arm()
+        torque_results = compute_static_torques(config)
+        lift_results = run_lift_test(config)
+        report_text = generate_report(config.name, torque_results, lift_results)
+        return {
+            "config_name": config.name,
+            "torque_check": torque_results,
+            "lift_test": lift_results,
+            "report": report_text,
+        }
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
