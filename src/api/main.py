@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from src.urdf_generator.generator import generate_urdf
 from src.urdf_generator.samples import two_link_arm
 from src.simulation.runner import run_smoke_test
+from src.analysis.torque_check import compute_static_torques
 
 app = FastAPI(title="Robot Sim API")
 
@@ -33,5 +34,21 @@ def demo_two_link_arm():
             "urdf_preview": urdf[:300] + "...",
             "simulation_result": result,
         }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/demo/two-link-arm/torque-check")
+def demo_two_link_arm_torque_check():
+    """
+    Pure-math static capability check for the sample arm - no simulation.
+    Computes required torque at each joint to hold the arm fully extended
+    horizontally (worst case for gravity loading) and compares it to each
+    joint's max_torque_nm.
+    """
+    try:
+        config = two_link_arm()
+        results = compute_static_torques(config)
+        return {"config_name": config.name, "torque_check": results}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
