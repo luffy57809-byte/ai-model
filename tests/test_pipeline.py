@@ -21,5 +21,5 @@ def test_full_pipeline_runs_in_pybullet():
     config = two_link_arm()
     urdf = generate_urdf(config)
     result = run_smoke_test(urdf, sim_seconds=0.5)
-    assert result["num_joints"] == 2
-    assert len(result["final_joint_positions"]) == 2
+    assert result["num_joints"] == 3  # shoulder + elbow + fixed payload_mount joint
+    assert len(result["final_joint_positions"]) == 3

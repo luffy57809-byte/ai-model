@@ -96,6 +96,23 @@ def generate_urdf(config: ArmConfig) -> str:
         parent_length = parent_link.length_m if parent_link else 0.0
         parts.append(_joint_xml(joint, parent_length))
 
+    if config.payload_mass_kg > 0 and config.links:
+        last_link = config.links[-1]
+        payload_radius = 0.025
+        parts.append(
+            f'  <link name="payload">\n'
+            f'    <visual><geometry><sphere radius="{payload_radius}"/></geometry></visual>\n'
+            f'    <collision><geometry><sphere radius="{payload_radius}"/></geometry></collision>\n'
+            f'    <inertial><mass value="{config.payload_mass_kg}"/>'
+            f'<inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/></inertial>\n'
+            f"  </link>\n"
+            f'  <joint name="payload_mount" type="fixed">\n'
+            f'    <parent link="{last_link.name}"/>\n'
+            f'    <child link="payload"/>\n'
+            f'    <origin xyz="0 0 {last_link.length_m}" rpy="0 0 0"/>\n'
+            f"  </joint>\n"
+        )
+
     parts.append("</robot>\n")
     return "".join(parts)
 

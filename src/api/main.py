@@ -10,6 +10,7 @@ from src.urdf_generator.generator import generate_urdf
 from src.urdf_generator.samples import two_link_arm
 from src.simulation.runner import run_smoke_test
 from src.analysis.torque_check import compute_static_torques
+from src.simulation.lift_test import run_lift_test
 
 app = FastAPI(title="Robot Sim API")
 
@@ -50,5 +51,20 @@ def demo_two_link_arm_torque_check():
         config = two_link_arm()
         results = compute_static_torques(config)
         return {"config_name": config.name, "torque_check": results}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/demo/two-link-arm/lift-test")
+def demo_two_link_arm_lift_test():
+    """
+    Dynamic counterpart to the static torque check: actually commands the
+    arm's motors to hold the fully-extended horizontal pose under gravity
+    and payload, and reports what really happened (sag, actual torque draw).
+    """
+    try:
+        config = two_link_arm()
+        result = run_lift_test(config)
+        return {"config_name": config.name, "lift_test": result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
