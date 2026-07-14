@@ -1,0 +1,24 @@
+{
+  "name": "robot-sim",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {}
+  },
+  "onCreateCommand": "apt-get update && apt-get install -y libgl1-mesa-glx libosmesa6-dev freeglut3-dev xvfb",
+  "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  },
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "API server",
+      "onAutoForward": "notify"
+    }
+  }
+}

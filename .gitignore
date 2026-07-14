@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# generated artifacts
+data/generated_urdf/
+*.log
+
+# editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
