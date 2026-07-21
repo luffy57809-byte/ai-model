@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arm Bench — Robot Arm Design Analyzer</title>
+<style>
+  :root {
+    --blueprint-deep: #0B1E33;
+    --blueprint-panel: #0F2A47;
+    --blueprint-line: #1F4A73;
+    --blueprint-ink: #DCE8F5;
+    --blueprint-dim: #7C9CBF;
+    --pass-cyan: #4FD8C4;
+    --fail-amber: #F0955A;
+    --fail-red: #E2574C;
+    --mono: 'JetBrains Mono', 'Courier New', monospace;
+    --sans: 'Space Grotesk', 'Segoe UI', sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background-color: var(--blueprint-deep);
+    background-image:
+      linear-gradient(var(--blueprint-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--blueprint-line) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-attachment: fixed;
+    color: var(--blueprint-ink);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 0 0 80px 0;
+  }
+
+  header {
+    padding: 40px 32px 24px;
+    border-bottom: 1px solid var(--blueprint-line);
+    background: linear-gradient(180deg, rgba(11,30,51,0.95), rgba(11,30,51,0.6));
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--pass-cyan);
+    margin: 0 0 8px 0;
+  }
+
+  h1 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 32px;
+    margin: 0 0 6px 0;
+    letter-spacing: -0.01em;
+  }
+
+  .subhead {
+    color: var(--blueprint-dim);
+    font-size: 14px;
+    max-width: 640px;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  main {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 32px;
+    display: grid;
+    grid-template-columns: minmax(340px, 420px) 1fr;
+    gap: 28px;
+  }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--blueprint-panel);
+    border: 1px solid var(--blueprint-line);
+    border-radius: 2px;
+    padding: 24px;
+    position: relative;
+  }
+
+  .panel::before {
+    content: attr(data-tag);
+    position: absolute;
+    top: -1px;
+    left: 20px;
+    background: var(--blueprint-panel);
+    padding: 0 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--blueprint-dim);
+    transform: translateY(-50%);
+  }
+
+  fieldset {
+    border: 1px dashed var(--blueprint-line);
+    border-radius: 2px;
+    margin: 0 0 20px 0;
+    padding: 14px 16px 16px;
+  }
+
+  legend {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--pass-cyan);
+    padding: 0 6px;
+    letter-spacing: 0.06em;
+  }
+
+  label {
+    display: block;
+    font-size: 11px;
+    color: var(--blueprint-dim);
+    font-family: var(--mono);
+    margin: 10px 0 4px;
+    letter-spacing: 0.04em;
+  }
+
+  input, select {
+    width: 100%;
+    background: var(--blueprint-deep);
+    border: 1px solid var(--blueprint-line);
+    color: var(--blueprint-ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 7px 9px;
+    border-radius: 2px;
+  }
+
+  input:focus, select:focus, button:focus-visible {
+    outline: 2px solid var(--pass-cyan);
+    outline-offset: 1px;
+  }
+
+  .row-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 12px;
+  }
+
+  .link-row, .joint-row {
+    border: 1px solid var(--blueprint-line);
+    border-radius: 2px;
+    padding: 10px 12px 12px;
+    margin-bottom: 10px;
+    position: relative;
+  }
+
+  .row-index {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--blueprint-dim);
+    position: absolute;
+    top: 6px;
+    right: 10px;
+  }
+
+  .remove-btn {
+    background: none;
+    border: 1px solid var(--fail-red);
+    color: var(--fail-red);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: 2px;
+    margin-top: 8px;
+  }
+  .remove-btn:hover { background: rgba(226, 87, 76, 0.15); }
+
+  .add-btn {
+    width: 100%;
+    background: none;
+    border: 1px dashed var(--pass-cyan);
+    color: var(--pass-cyan);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px;
+    cursor: pointer;
+    border-radius: 2px;
+    letter-spacing: 0.04em;
+  }
+  .add-btn:hover { background: rgba(79, 216, 196, 0.08); }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--blueprint-dim);
+  }
+  .checkbox-row input { width: auto; }
+
+  .run-btn {
+    width: 100%;
+    background: var(--pass-cyan);
+    color: var(--blueprint-deep);
+    border: none;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 13px;
+    cursor: pointer;
+    border-radius: 2px;
+    margin-top: 6px;
+    letter-spacing: 0.02em;
+  }
+  .run-btn:hover { background: #6ee6d4; }
+  .run-btn:disabled { background: var(--blueprint-line); color: var(--blueprint-dim); cursor: not-allowed; }
+
+  .results-empty {
+    color: var(--blueprint-dim);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    padding: 20px 0;
+  }
+
+  .joint-result {
+    border: 1px solid var(--blueprint-line);
+    border-radius: 2px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+
+  .joint-result-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+
+  .joint-name {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .status-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    padding: 2px 8px;
+    border-radius: 2px;
+  }
+  .status-pass { color: var(--pass-cyan); border: 1px solid var(--pass-cyan); }
+  .status-fail { color: var(--fail-red); border: 1px solid var(--fail-red); background: rgba(226,87,76,0.1); }
+
+  .margin-track {
+    height: 6px;
+    background: var(--blueprint-deep);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 8px 0;
+    position: relative;
+  }
+  .margin-fill {
+    height: 100%;
+    border-radius: 3px;
+  }
+
+  .data-line {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--blueprint-dim);
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+  }
+  .data-line span:last-child { color: var(--blueprint-ink); }
+
+  .sag-note {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fail-amber);
+    margin-top: 8px;
+  }
+
+  .report-box {
+    border: 1px solid var(--blueprint-line);
+    border-radius: 2px;
+    padding: 18px 20px;
+    margin-top: 8px;
+    background: var(--blueprint-deep);
+    font-size: 13.5px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--blueprint-dim);
+    text-transform: uppercase;
+    margin: 24px 0 12px;
+    border-bottom: 1px solid var(--blueprint-line);
+    padding-bottom: 6px;
+  }
+  .section-label:first-child { margin-top: 0; }
+
+  .error-box {
+    border: 1px solid var(--fail-red);
+    background: rgba(226,87,76,0.08);
+    color: #FFD3CE;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 12px 14px;
+    border-radius: 2px;
+    line-height: 1.6;
+  }
+
+  .spinner {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--pass-cyan);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="eyebrow">// arm bench v1</p>
+  <h1>Robot Arm Design Analyzer</h1>
+  <p class="subhead">Define a serial robotic arm. Get a real static torque check, a real PyBullet dynamic lift test, and an optional plain-English design review — all grounded in the physics actually computed, not guessed.</p>
+</header>
+
+<main>
+  <form class="panel" data-tag="INPUT — ARM CONFIG" id="arm-form">
+    <fieldset>
+      <legend>identity</legend>
+      <label for="arm-name">Arm name</label>
+      <input type="text" id="arm-name" value="my_arm" required>
+
+      <label for="payload-mass">Payload mass at tip (kg)</label>
+      <input type="number" id="payload-mass" value="0.5" step="0.01" min="0" required>
+    </fieldset>
+
+    <fieldset>
+      <legend>links (base → tip)</legend>
+      <div id="links-container"></div>
+      <button type="button" class="add-btn" id="add-link">+ add link</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>joints (one per link, same order)</legend>
+      <div id="joints-container"></div>
+      <button type="button" class="add-btn" id="add-joint">+ add joint</button>
+    </fieldset>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="include-lift-test" checked>
+      <label for="include-lift-test" style="margin:0;">run dynamic lift test (~3 sim-seconds)</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="include-report">
+      <label for="include-report" style="margin:0;">generate LLM report (needs GEMINI_API_KEY on the server)</label>
+    </div>
+
+    <button type="submit" class="run-btn" id="run-btn">Run analysis</button>
+  </form>
+
+  <section class="panel" data-tag="OUTPUT — RESULTS" id="results-panel">
+    <div class="results-empty" id="results-empty">
+      No run yet. Define at least one link and one joint, then run the analysis.<br><br>
+      Reminder: a joint axis perpendicular to its link (e.g. [0,1,0]) resists gravity when lifting. An axis parallel to the link (e.g. [0,0,1]) is a roll/twist joint and won't show meaningful torque here — that's expected, not a bug.
+    </div>
+    <div id="results-content" style="display:none;"></div>
+  </section>
+</main>
+
+<template id="link-template">
+  <div class="link-row">
+    <span class="row-index"></span>
+    <div class="row-grid">
+      <div><label>Name</label><input type="text" class="link-name" value="link"></div>
+      <div><label>Length (m)</label><input type="number" class="link-length" value="0.3" step="0.01" min="0.001"></div>
+      <div><label>Mass (kg)</label><input type="number" class="link-mass" value="1.0" step="0.01" min="0.001"></div>
+      <div><label>Radius (m)</label><input type="number" class="link-radius" value="0.03" step="0.005" min="0.001"></div>
+    </div>
+    <button type="button" class="remove-btn">remove</button>
+  </div>
+</template>
+
+<template id="joint-template">
+  <div class="joint-row">
+    <span class="row-index"></span>
+    <div class="row-grid">
+      <div><label>Name</label><input type="text" class="joint-name" value="joint"></div>
+      <div>
+        <label>Type</label>
+        <select class="joint-type">
+          <option value="revolute" selected>revolute</option>
+          <option value="continuous">continuous</option>
+          <option value="prismatic">prismatic</option>
+        </select>
+      </div>
+      <div><label>Max torque (Nm)</label><input type="number" class="joint-torque" value="10.0" step="0.1" min="0.001"></div>
+      <div><label>Max velocity (rad/s)</label><input type="number" class="joint-velocity" value="2.0" step="0.1" min="0.001"></div>
+      <div><label>Axis X</label><input type="number" class="joint-axis-x" value="0" step="1"></div>
+      <div><label>Axis Y</label><input type="number" class="joint-axis-y" value="1" step="1"></div>
+      <div><label>Axis Z</label><input type="number" class="joint-axis-z" value="0" step="1"></div>
+      <div></div>
+      <div><label>Lower limit (rad)</label><input type="number" class="joint-lower" value="-1.57" step="0.01"></div>
+      <div><label>Upper limit (rad)</label><input type="number" class="joint-upper" value="1.57" step="0.01"></div>
+    </div>
+    <button type="button" class="remove-btn">remove</button>
+  </div>
+</template>
+
+<script>
+const linksContainer = document.getElementById('links-container');
+const jointsContainer = document.getElementById('joints-container');
+const linkTemplate = document.getElementById('link-template');
+const jointTemplate = document.getElementById('joint-template');
+
+function reindexRows(container, selector) {
+  container.querySelectorAll(selector).forEach((row, i) => {
+    row.querySelector('.row-index').textContent = '#' + (i + 1);
+  });
+}
+
+function addLink(name, length, mass, radius) {
+  const node = linkTemplate.content.cloneNode(true);
+  const row = node.querySelector('.link-row');
+  if (name !== undefined) row.querySelector('.link-name').value = name;
+  if (length !== undefined) row.querySelector('.link-length').value = length;
+  if (mass !== undefined) row.querySelector('.link-mass').value = mass;
+  if (radius !== undefined) row.querySelector('.link-radius').value = radius;
+  row.querySelector('.remove-btn').addEventListener('click', () => {
+    row.remove();
+    reindexRows(linksContainer, '.link-row');
+  });
+  linksContainer.appendChild(node);
+  reindexRows(linksContainer, '.link-row');
+}
+
+function addJoint(name, type, torque, vel, ax, ay, az, lower, upper) {
+  const node = jointTemplate.content.cloneNode(true);
+  const row = node.querySelector('.joint-row');
+  if (name !== undefined) row.querySelector('.joint-name').value = name;
+  if (type !== undefined) row.querySelector('.joint-type').value = type;
+  if (torque !== undefined) row.querySelector('.joint-torque').value = torque;
+  if (vel !== undefined) row.querySelector('.joint-velocity').value = vel;
+  if (ax !== undefined) row.querySelector('.joint-axis-x').value = ax;
+  if (ay !== undefined) row.querySelector('.joint-axis-y').value = ay;
+  if (az !== undefined) row.querySelector('.joint-axis-z').value = az;
+  if (lower !== undefined) row.querySelector('.joint-lower').value = lower;
+  if (upper !== undefined) row.querySelector('.joint-upper').value = upper;
+  row.querySelector('.remove-btn').addEventListener('click', () => {
+    row.remove();
+    reindexRows(jointsContainer, '.joint-row');
+  });
+  jointsContainer.appendChild(node);
+  reindexRows(jointsContainer, '.joint-row');
+}
+
+document.getElementById('add-link').addEventListener('click', () => addLink());
+document.getElementById('add-joint').addEventListener('click', () => addJoint());
+
+addLink('upper_arm', 0.3, 1.5, 0.03);
+addLink('forearm', 0.25, 1.0, 0.025);
+addJoint('shoulder', 'revolute', 15.0, 2.0, 0, 1, 0, -1.57, 1.57);
+addJoint('elbow', 'revolute', 8.0, 2.0, 0, 1, 0, -2.5, 2.5);
+
+function buildConfig() {
+  const links = Array.from(linksContainer.querySelectorAll('.link-row')).map(row => ({
+    name: row.querySelector('.link-name').value.trim(),
+    length_m: parseFloat(row.querySelector('.link-length').value),
+    mass_kg: parseFloat(row.querySelector('.link-mass').value),
+    radius_m: parseFloat(row.querySelector('.link-radius').value),
+  }));
+
+  const jointRows = Array.from(jointsContainer.querySelectorAll('.joint-row'));
+  const joints = jointRows.map((row, i) => {
+    const parentLink = i === 0 ? 'base_link' : links[i - 1].name;
+    return {
+      name: row.querySelector('.joint-name').value.trim(),
+      joint_type: row.querySelector('.joint-type').value,
+      parent_link: parentLink,
+      child_link: links[i] ? links[i].name : null,
+      axis: [
+        parseFloat(row.querySelector('.joint-axis-x').value),
+        parseFloat(row.querySelector('.joint-axis-y').value),
+        parseFloat(row.querySelector('.joint-axis-z').value),
+      ],
+      lower_limit_rad: parseFloat(row.querySelector('.joint-lower').value),
+      upper_limit_rad: parseFloat(row.querySelector('.joint-upper').value),
+      max_torque_nm: parseFloat(row.querySelector('.joint-torque').value),
+      max_velocity_rad_s: parseFloat(row.querySelector('.joint-velocity').value),
+    };
+  });
+
+  return {
+    name: document.getElementById('arm-name').value.trim(),
+    links: links,
+    joints: joints,
+    payload_mass_kg: parseFloat(document.getElementById('payload-mass').value),
+  };
+}
+
+function marginColor(marginPercent) {
+  if (marginPercent >= 20) return 'var(--pass-cyan)';
+  if (marginPercent >= 0) return 'var(--fail-amber)';
+  return 'var(--fail-red)';
+}
+
+function renderTorqueCheck(torqueCheck, liftTestByName) {
+  return torqueCheck.map(j => {
+    const status = j.passes ? 'PASS' : 'FAIL';
+    const statusClass = j.passes ? 'status-pass' : 'status-fail';
+    const barWidth = Math.max(0, Math.min(100, j.margin_percent + 50));
+    const lift = liftTestByName ? liftTestByName[j.joint_name] : null;
+    let sagNote = '';
+    if (lift && lift.sag_deg > 1) {
+      sagNote = `<div class="sag-note">Dynamic sim: sagged ${lift.sag_deg}&deg; under load (target was 0&deg;)</div>`;
+    }
+    return `
+      <div class="joint-result">
+        <div class="joint-result-head">
+          <span class="joint-name">${j.joint_name}</span>
+          <span class="status-badge ${statusClass}">${status}</span>
+        </div>
+        <div class="margin-track">
+          <div class="margin-fill" style="width:${barWidth}%; background:${marginColor(j.margin_percent)};"></div>
+        </div>
+        <div class="data-line"><span>required torque</span><span>${j.required_torque_nm} Nm</span></div>
+        <div class="data-line"><span>rated torque</span><span>${j.max_torque_nm} Nm</span></div>
+        <div class="data-line"><span>margin</span><span>${j.margin_percent}%</span></div>
+        ${lift ? `<div class="data-line"><span>dynamic torque draw</span><span>${lift.max_applied_torque_nm} Nm</span></div>` : ''}
+        ${sagNote}
+      </div>
+    `;
+  }).join('');
+}
+
+document.getElementById('arm-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const runBtn = document.getElementById('run-btn');
+  const resultsEmpty = document.getElementById('results-empty');
+  const resultsContent = document.getElementById('results-content');
+
+  runBtn.disabled = true;
+  runBtn.textContent = 'Running...';
+  resultsEmpty.style.display = 'block';
+  resultsEmpty.innerHTML = '<span class="spinner">Running static + dynamic analysis...</span>';
+  resultsContent.style.display = 'none';
+
+  const config = buildConfig();
+  const includeLiftTest = document.getElementById('include-lift-test').checked;
+  const includeReport = document.getElementById('include-report').checked;
+
+  const params = new URLSearchParams({
+    include_lift_test: includeLiftTest,
+    include_report: includeReport,
+  });
+
+  try {
+    const response = await fetch(`/analyze/arm?${params}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail, null, 2);
+      resultsEmpty.innerHTML = `<div class="error-box">Request failed (${response.status}):<br>${detail}</div>`;
+      return;
+    }
+
+    const liftTestByName = {};
+    if (data.lift_test) {
+      data.lift_test.joint_results.forEach(j => { liftTestByName[j.joint_name] = j; });
+    }
+
+    let html = '<div class="section-label">static torque check</div>';
+    html += renderTorqueCheck(data.torque_check, data.lift_test ? liftTestByName : null);
+
+    if (data.report) {
+      html += '<div class="section-label">design review</div>';
+      html += `<div class="report-box">${data.report}</div>`;
+    }
+
+    resultsEmpty.style.display = 'none';
+    resultsContent.style.display = 'block';
+    resultsContent.innerHTML = html;
+  } catch (err) {
+    resultsEmpty.innerHTML = `<div class="error-box">Could not reach the API: ${err.message}</div>`;
+  } finally {
+    runBtn.disabled = false;
+    runBtn.textContent = 'Run analysis';
+  }
+});
+</script>
+
+</body>
+</html>

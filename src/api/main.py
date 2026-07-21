@@ -144,3 +144,11 @@ def analyze_arm(
             raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
 
     return response
+
+
+# Mounted last and deliberately: Starlette matches routes in registration
+# order, so every /health, /demo/..., /analyze/arm route above is checked
+# first. Only requests that don't match any of those fall through to serving
+# the frontend static files (index.html at "/", etc.).
+from fastapi.staticfiles import StaticFiles
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
