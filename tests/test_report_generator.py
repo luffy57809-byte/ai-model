@@ -10,11 +10,11 @@ from src.simulation.lift_test import run_lift_test
 
 
 def test_missing_api_key_raises_clear_error(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     config = two_link_arm()
     torque_results = compute_static_torques(config)
 
-    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY is not set"):
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY is not set"):
         generate_report(config.name, torque_results)
 
 
@@ -32,25 +32,21 @@ def test_user_message_contains_real_numbers_not_invented_ones():
 
 
 def test_generate_report_calls_api_with_expected_shape(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake-for-testing")
-
-    fake_text_block = MagicMock()
-    fake_text_block.type = "text"
-    fake_text_block.text = "Mock report: all joints pass with healthy margins."
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-testing")
 
     fake_response = MagicMock()
-    fake_response.content = [fake_text_block]
+    fake_response.text = "Mock report: all joints pass with healthy margins."
 
-    with patch("src.ai_layer.report_generator.anthropic.Anthropic") as MockClient:
+    with patch("src.ai_layer.report_generator.genai.Client") as MockClient:
         mock_instance = MockClient.return_value
-        mock_instance.messages.create.return_value = fake_response
+        mock_instance.models.generate_content.return_value = fake_response
 
         config = two_link_arm()
         torque_results = compute_static_torques(config)
         report = generate_report(config.name, torque_results)
 
         assert report == "Mock report: all joints pass with healthy margins."
-        mock_instance.messages.create.assert_called_once()
-        call_kwargs = mock_instance.messages.create.call_args.kwargs
-        assert call_kwargs["model"] == "claude-sonnet-5"
-        assert "two_link_arm" in call_kwargs["messages"][0]["content"]
+        mock_instance.models.generate_content.assert_called_once()
+        call_kwargs = mock_instance.models.generate_content.call_args.kwargs
+        assert call_kwargs["model"] == "gemini-3.5-flash"
+        assert "two_link_arm" in call_kwargs["contents"]

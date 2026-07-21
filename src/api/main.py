@@ -4,9 +4,10 @@ config -> URDF -> simulation pipeline so you can hit it from the browser
 preview in Codespace and see it's actually working.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
-from src.urdf_generator.generator import generate_urdf
+from src.urdf_generator.schema import ArmConfig
+from src.urdf_generator.generator import generate_urdf, validate_config
 from src.urdf_generator.samples import two_link_arm
 from src.simulation.runner import run_smoke_test
 from src.analysis.torque_check import compute_static_torques
@@ -76,7 +77,7 @@ def demo_two_link_arm_report():
     """
     Full pipeline: real static torque check + real dynamic lift test,
     both fed to the LLM as data, which writes a plain-English design
-    review grounded strictly in those numbers. Requires ANTHROPIC_API_KEY
+    review grounded strictly in those numbers. Requires GEMINI_API_KEY
     to be set in the environment.
     """
     try:
@@ -94,3 +95,52 @@ def demo_two_link_arm_report():
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/analyze/arm")
+def analyze_arm(
+    config: ArmConfig,
+    include_lift_test: bool = Query(True, description="Run the dynamic PyBullet lift test (slower, ~3 sim-seconds)."),
+    include_report: bool = Query(False, description="Generate an LLM report - requires GEMINI_API_KEY, and uses your free-tier quota."),
+):
+    """
+    The real entry point: submit ANY arm design (not just the built-in
+    sample) as an ArmConfig JSON body, and get back the full analysis.
+
+    Note on the shoulder axis: use [0, 1, 0] or [1, 0, 0] (perpendicular to
+    the link) if you want that joint to actually resist gravity when lifting.
+    An axis of [0, 0, 1] makes it a roll/twist joint instead - see the
+    two_link_arm sample's shoulder joint for a real example of that
+    distinction, found during dynamic testing.
+    """
+    config_errors = validate_config(config)
+    if config_errors:
+        raise HTTPException(status_code=400, detail={"config_errors": config_errors})
+
+    try:
+        torque_results = compute_static_torques(config)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    response = {
+        "config_name": config.name,
+        "torque_check": torque_results,
+    }
+
+    if include_lift_test:
+        try:
+            response["lift_test"] = run_lift_test(config)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Lift test failed: {exc}")
+
+    if include_report:
+        try:
+            response["report"] = generate_report(
+                config.name, torque_results, response.get("lift_test")
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
+
+    return response
