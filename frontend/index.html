@@ -218,6 +218,23 @@
   .run-btn:hover { background: #6ee6d4; }
   .run-btn:disabled { background: var(--blueprint-line); color: var(--blueprint-dim); cursor: not-allowed; }
 
+  .save-btn {
+    width: 100%;
+    background: none;
+    border: 1px solid var(--fail-amber);
+    color: var(--fail-amber);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 10px;
+    cursor: pointer;
+    border-radius: 2px;
+    margin-top: 8px;
+    letter-spacing: 0.02em;
+  }
+  .save-btn:hover { background: rgba(240, 149, 90, 0.1); }
+  .save-btn:disabled { border-color: var(--blueprint-line); color: var(--blueprint-dim); cursor: not-allowed; }
+
   .results-empty {
     color: var(--blueprint-dim);
     font-family: var(--mono);
@@ -325,7 +342,81 @@
     font-size: 12px;
     color: var(--pass-cyan);
   }
+
+  .viewer-panel {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 32px 32px;
+  }
+
+  .viewer-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .view-toggle-btn {
+    background: none;
+    border: 1px solid var(--blueprint-line);
+    color: var(--blueprint-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 14px;
+    cursor: pointer;
+    border-radius: 2px;
+    letter-spacing: 0.04em;
+  }
+  .view-toggle-btn.active {
+    border-color: var(--pass-cyan);
+    color: var(--pass-cyan);
+    background: rgba(79, 216, 196, 0.08);
+  }
+  .view-toggle-btn:disabled {
+    color: var(--blueprint-line);
+    border-color: var(--blueprint-line);
+    cursor: not-allowed;
+  }
+
+  .viewer-hint {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--blueprint-dim);
+    margin-left: auto;
+  }
+
+  #viewer-canvas-container {
+    width: 100%;
+    height: 440px;
+    border: 1px solid var(--blueprint-line);
+    border-radius: 2px;
+    background: var(--blueprint-deep);
+    position: relative;
+    overflow: hidden;
+  }
+
+  #viewer-canvas-container canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .viewer-empty-note {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--blueprint-dim);
+    padding: 20px;
+  }
 </style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
 </head>
 <body>
 
@@ -344,6 +435,17 @@
 
       <label for="payload-mass">Payload mass at tip (kg)</label>
       <input type="number" id="payload-mass" value="0.5" step="0.01" min="0" required>
+    </fieldset>
+
+    <fieldset>
+      <legend>saved designs</legend>
+      <select id="saved-designs-select">
+        <option value="">— none saved yet —</option>
+      </select>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button type="button" class="add-btn" id="load-design-btn" style="flex:1;">Load</button>
+        <button type="button" class="remove-btn" id="delete-design-btn" style="flex:1; margin-top:0; padding:8px;">Delete</button>
+      </div>
     </fieldset>
 
     <fieldset>
@@ -368,6 +470,7 @@
     </div>
 
     <button type="submit" class="run-btn" id="run-btn">Run analysis</button>
+    <button type="button" class="save-btn" id="save-design-btn">Save this design</button>
   </form>
 
   <section class="panel" data-tag="OUTPUT — RESULTS" id="results-panel">
@@ -378,6 +481,19 @@
     <div id="results-content" style="display:none;"></div>
   </section>
 </main>
+
+<section class="viewer-panel">
+  <div class="panel" data-tag="OUTPUT — 3D VIEW" style="padding: 20px;">
+    <div class="viewer-toolbar">
+      <button type="button" class="view-toggle-btn active" id="view-static-btn">Static pose</button>
+      <button type="button" class="view-toggle-btn" id="view-animate-btn" disabled>Animate lift test</button>
+      <span class="viewer-hint" id="viewer-hint">Run an analysis to see the arm rendered here.</span>
+    </div>
+    <div id="viewer-canvas-container">
+      <div class="viewer-empty-note" id="viewer-empty-note">No design rendered yet.</div>
+    </div>
+  </div>
+</section>
 
 <template id="link-template">
   <div class="link-row">
@@ -468,10 +584,121 @@ function addJoint(name, type, torque, vel, ax, ay, az, lower, upper) {
 document.getElementById('add-link').addEventListener('click', () => addLink());
 document.getElementById('add-joint').addEventListener('click', () => addJoint());
 
+// Seed with the two_link_arm sample so there's something sensible to run immediately.
 addLink('upper_arm', 0.3, 1.5, 0.03);
 addLink('forearm', 0.25, 1.0, 0.025);
 addJoint('shoulder', 'revolute', 15.0, 2.0, 0, 1, 0, -1.57, 1.57);
 addJoint('elbow', 'revolute', 8.0, 2.0, 0, 1, 0, -2.5, 2.5);
+
+// --- Saved designs (persistence) ---
+
+const savedDesignsSelect = document.getElementById('saved-designs-select');
+const loadDesignBtn = document.getElementById('load-design-btn');
+const deleteDesignBtn = document.getElementById('delete-design-btn');
+const saveDesignBtn = document.getElementById('save-design-btn');
+
+async function refreshSavedDesignsList() {
+  try {
+    const response = await fetch('/designs');
+    const designs = await response.json();
+    const previousValue = savedDesignsSelect.value;
+
+    savedDesignsSelect.innerHTML = '';
+    if (designs.length === 0) {
+      savedDesignsSelect.innerHTML = '<option value="">— none saved yet —</option>';
+      return;
+    }
+    designs.forEach(d => {
+      const option = document.createElement('option');
+      option.value = d.slug;
+      option.textContent = d.name;
+      savedDesignsSelect.appendChild(option);
+    });
+    if (designs.some(d => d.slug === previousValue)) {
+      savedDesignsSelect.value = previousValue;
+    }
+  } catch (err) {
+    console.error('Could not load saved designs list:', err);
+  }
+}
+
+function loadConfigIntoForm(config) {
+  document.getElementById('arm-name').value = config.name;
+  document.getElementById('payload-mass').value = config.payload_mass_kg;
+
+  linksContainer.innerHTML = '';
+  jointsContainer.innerHTML = '';
+
+  config.links.forEach(link => addLink(link.name, link.length_m, link.mass_kg, link.radius_m));
+  config.joints.forEach(joint => addJoint(
+    joint.name, joint.joint_type, joint.max_torque_nm, joint.max_velocity_rad_s,
+    joint.axis[0], joint.axis[1], joint.axis[2],
+    joint.lower_limit_rad, joint.upper_limit_rad
+  ));
+}
+
+saveDesignBtn.addEventListener('click', async () => {
+  const config = buildConfig();
+  saveDesignBtn.disabled = true;
+  saveDesignBtn.textContent = 'Saving...';
+  try {
+    const response = await fetch('/designs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      alert('Could not save design: ' + JSON.stringify(data.detail));
+      return;
+    }
+    await refreshSavedDesignsList();
+    savedDesignsSelect.value = data.slug;
+    saveDesignBtn.textContent = 'Saved!';
+    setTimeout(() => { saveDesignBtn.textContent = 'Save this design'; }, 1500);
+  } catch (err) {
+    alert('Could not reach the server to save: ' + err.message);
+  } finally {
+    saveDesignBtn.disabled = false;
+  }
+});
+
+loadDesignBtn.addEventListener('click', async () => {
+  const slug = savedDesignsSelect.value;
+  if (!slug) return;
+  try {
+    const response = await fetch(`/designs/${slug}`);
+    if (!response.ok) {
+      alert('Could not load that design - it may have been deleted.');
+      await refreshSavedDesignsList();
+      return;
+    }
+    const config = await response.json();
+    loadConfigIntoForm(config);
+  } catch (err) {
+    alert('Could not reach the server to load: ' + err.message);
+  }
+});
+
+deleteDesignBtn.addEventListener('click', async () => {
+  const slug = savedDesignsSelect.value;
+  if (!slug) return;
+  const name = savedDesignsSelect.options[savedDesignsSelect.selectedIndex].textContent;
+  if (!confirm(`Delete saved design "${name}"? This can't be undone.`)) return;
+
+  try {
+    const response = await fetch(`/designs/${slug}`, { method: 'DELETE' });
+    if (!response.ok) {
+      alert('Could not delete that design.');
+      return;
+    }
+    await refreshSavedDesignsList();
+  } catch (err) {
+    alert('Could not reach the server to delete: ' + err.message);
+  }
+});
+
+refreshSavedDesignsList();
 
 function buildConfig() {
   const links = Array.from(linksContainer.querySelectorAll('.link-row')).map(row => ({
@@ -563,6 +790,7 @@ document.getElementById('arm-form').addEventListener('submit', async (e) => {
   const params = new URLSearchParams({
     include_lift_test: includeLiftTest,
     include_report: includeReport,
+    include_trajectory: includeLiftTest,
   });
 
   try {
@@ -595,6 +823,10 @@ document.getElementById('arm-form').addEventListener('submit', async (e) => {
     resultsEmpty.style.display = 'none';
     resultsContent.style.display = 'block';
     resultsContent.innerHTML = html;
+
+    if (window.renderArmViewer) {
+      window.renderArmViewer(config, data.torque_check, data.lift_test);
+    }
   } catch (err) {
     resultsEmpty.innerHTML = `<div class="error-box">Could not reach the API: ${err.message}</div>`;
   } finally {
@@ -602,6 +834,209 @@ document.getElementById('arm-form').addEventListener('submit', async (e) => {
     runBtn.textContent = 'Run analysis';
   }
 });
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const container = document.getElementById('viewer-canvas-container');
+const emptyNote = document.getElementById('viewer-empty-note');
+const staticBtn = document.getElementById('view-static-btn');
+const animateBtn = document.getElementById('view-animate-btn');
+const viewerHint = document.getElementById('viewer-hint');
+
+let renderer, scene, camera, controls;
+let jointGroups = [];
+let payloadMesh = null;
+let currentTrajectory = null;
+let animationMode = false;
+let animFrameIndex = 0;
+let lastFrameTime = 0;
+
+function initSceneIfNeeded() {
+  if (renderer) return;
+
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0B1E33);
+
+  camera = new THREE.PerspectiveCamera(45, width / height, 0.01, 100);
+  camera.position.set(0.9, 0.7, 0.9);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(width, height);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  container.innerHTML = '';
+  container.appendChild(renderer.domElement);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0.15);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+  directional.position.set(1, 1.5, 1);
+  scene.add(directional);
+
+  scene.add(new THREE.GridHelper(1.2, 12, 0x1F4A73, 0x14324f));
+  scene.add(new THREE.AxesHelper(0.1));
+
+  window.addEventListener('resize', onResize);
+  requestAnimationFrame(animate);
+}
+
+function onResize() {
+  if (!renderer) return;
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(width, height);
+}
+
+function animate(time) {
+  requestAnimationFrame(animate);
+
+  if (animationMode && currentTrajectory) {
+    const frameDurationMs = 1000 / currentTrajectory.fps;
+    if (time - lastFrameTime >= frameDurationMs) {
+      lastFrameTime = time;
+      const frame = currentTrajectory.frames[animFrameIndex];
+      applyPose(frame);
+      animFrameIndex = (animFrameIndex + 1) % currentTrajectory.frames.length;
+    }
+  }
+
+  if (controls) controls.update();
+  if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+function applyPose(angles) {
+  jointGroups.forEach((jg, i) => {
+    const angle = angles ? angles[i] : 0;
+    jg.group.quaternion.setFromAxisAngle(jg.axisVector, angle);
+  });
+}
+
+function clearArm() {
+  jointGroups = [];
+  payloadMesh = null;
+  if (scene) {
+    scene.children.filter(c => c.userData && c.userData.isArmRoot).forEach(c => scene.remove(c));
+  }
+}
+
+function colorForJoint(jointName, torqueCheck) {
+  if (!torqueCheck) return 0x4FD8C4;
+  const result = torqueCheck.find(j => j.joint_name === jointName);
+  if (!result) return 0x4FD8C4;
+  return result.passes ? 0x4FD8C4 : 0xE2574C;
+}
+
+function buildArm(config, torqueCheck) {
+  initSceneIfNeeded();
+  clearArm();
+
+  const armRoot = new THREE.Group();
+  armRoot.userData.isArmRoot = true;
+  armRoot.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+  scene.add(armRoot);
+
+  let currentParent = armRoot;
+
+  config.links.forEach((link, i) => {
+    const joint = config.joints[i];
+    if (!joint) return;
+
+    const jointGroup = new THREE.Group();
+    jointGroup.position.set(0, 0, i === 0 ? 0 : config.links[i - 1].length_m);
+    currentParent.add(jointGroup);
+
+    const axisVector = new THREE.Vector3(joint.axis[0], joint.axis[1], joint.axis[2]);
+    if (axisVector.length() === 0) axisVector.set(0, 0, 1);
+    axisVector.normalize();
+    jointGroups.push({ group: jointGroup, axisVector, name: joint.name });
+
+    const radius = link.radius_m || 0.03;
+    const geometry = new THREE.CylinderGeometry(radius, radius, link.length_m, 16);
+    const material = new THREE.MeshStandardMaterial({
+      color: colorForJoint(joint.name, torqueCheck),
+      metalness: 0.2,
+      roughness: 0.5,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(0, 0, link.length_m / 2);
+    jointGroup.add(mesh);
+
+    const hingeGeom = new THREE.SphereGeometry(radius * 1.3, 12, 12);
+    const hingeMesh = new THREE.Mesh(hingeGeom, new THREE.MeshStandardMaterial({ color: 0xDCE8F5 }));
+    jointGroup.add(hingeMesh);
+
+    currentParent = jointGroup;
+  });
+
+  if (config.payload_mass_kg > 0 && config.links.length > 0) {
+    const payloadGeom = new THREE.SphereGeometry(0.025, 16, 16);
+    payloadMesh = new THREE.Mesh(payloadGeom, new THREE.MeshStandardMaterial({ color: 0xF0955A }));
+    payloadMesh.position.set(0, 0, config.links[config.links.length - 1].length_m);
+    currentParent.add(payloadMesh);
+  }
+
+  const totalReach = config.links.reduce((sum, l) => sum + l.length_m, 0) || 0.3;
+  camera.position.set(totalReach * 1.4, totalReach * 1.1, totalReach * 1.4);
+  controls.target.set(0, 0, totalReach * 0.4);
+  controls.update();
+
+  applyPose(null);
+}
+
+function renderArmViewer(config, torqueCheck, liftTest) {
+  emptyNote.style.display = 'none';
+  buildArm(config, torqueCheck);
+
+  animationMode = false;
+  animFrameIndex = 0;
+  staticBtn.classList.add('active');
+  animateBtn.classList.remove('active');
+
+  if (liftTest && liftTest.trajectory) {
+    currentTrajectory = liftTest.trajectory;
+    animateBtn.disabled = false;
+    viewerHint.textContent = 'Static pose shown. Click "Animate lift test" to play back the simulated motion.';
+  } else {
+    currentTrajectory = null;
+    animateBtn.disabled = true;
+    viewerHint.textContent = 'Enable the dynamic lift test to unlock animation playback.';
+  }
+}
+
+staticBtn.addEventListener('click', () => {
+  animationMode = false;
+  animFrameIndex = 0;
+  staticBtn.classList.add('active');
+  animateBtn.classList.remove('active');
+  applyPose(null);
+  viewerHint.textContent = currentTrajectory
+    ? 'Static pose shown. Click "Animate lift test" to play back the simulated motion.'
+    : 'Enable the dynamic lift test to unlock animation playback.';
+});
+
+animateBtn.addEventListener('click', () => {
+  if (!currentTrajectory) return;
+  animationMode = true;
+  animFrameIndex = 0;
+  lastFrameTime = 0;
+  staticBtn.classList.remove('active');
+  animateBtn.classList.add('active');
+  viewerHint.textContent = 'Playing back the recorded lift test motion (loops).';
+});
+
+window.renderArmViewer = renderArmViewer;
 </script>
 
 </body>

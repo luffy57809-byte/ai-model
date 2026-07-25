@@ -28,24 +28,28 @@ from src.urdf_generator.schema import ArmConfig
 from src.urdf_generator.generator import generate_urdf
 
 
-def run_lift_test(config: ArmConfig, sim_seconds: float = 3.0, sag_tolerance_deg: float = 5.0) -> dict:
+def run_lift_test(
+    config: ArmConfig,
+    sim_seconds: float = 3.0,
+    sag_tolerance_deg: float = 5.0,
+    record_trajectory: bool = False,
+    trajectory_fps: int = 30,
+) -> dict:
     """
     Returns:
       {
-        "joint_results": [
-          {
-            "joint_name": str,
-            "target_angle_deg": 0.0,
-            "final_angle_deg": float,
-            "sag_deg": float,
-            "max_applied_torque_nm": float,
-            "rated_max_torque_nm": float,
-            "passes": bool,
-          },
-          ...
-        ],
+        "joint_results": [...],
         "overall_passes": bool,
+        "trajectory": {                    # only present if record_trajectory=True
+          "fps": int,
+          "joint_order": [str, ...],       # matches config.joints order
+          "frames": [[angle_rad, ...], ...]  # one inner list per joint, per frame
+        }
       }
+
+    trajectory is meant for playback in a 3D viewer, not analysis - it's
+    sampled at trajectory_fps (default 30), not the physics engine's
+    internal 240Hz step rate, to keep the payload small.
     """
     urdf_string = generate_urdf(config)
 
@@ -94,13 +98,25 @@ def run_lift_test(config: ArmConfig, sim_seconds: float = 3.0, sag_tolerance_deg
                 maxVelocity=cfg_joint.max_velocity_rad_s,
             )
 
+        ordered_indices = [
+            next(idx for idx, name in actuated_joint_indices if name == j.name)
+            for j in config.joints
+        ]
+
         steps = int(sim_seconds * 240)
-        for _ in range(steps):
+        record_every = max(1, int(240 / trajectory_fps)) if record_trajectory else None
+        trajectory_frames = [] if record_trajectory else None
+
+        for step in range(steps):
             p.stepSimulation()
             for idx, _ in actuated_joint_indices:
                 applied_torque = abs(p.getJointState(robot_id, idx)[3])
                 if applied_torque > max_torque_tracker[idx]:
                     max_torque_tracker[idx] = applied_torque
+
+            if record_trajectory and step % record_every == 0:
+                frame = [p.getJointState(robot_id, idx)[0] for idx in ordered_indices]
+                trajectory_frames.append(frame)
 
         joint_results = []
         overall_passes = True
@@ -123,9 +139,18 @@ def run_lift_test(config: ArmConfig, sim_seconds: float = 3.0, sag_tolerance_deg
                 "passes": passes,
             })
 
-        return {
+        result = {
             "joint_results": joint_results,
             "overall_passes": overall_passes,
         }
+
+        if record_trajectory:
+            result["trajectory"] = {
+                "fps": trajectory_fps,
+                "joint_order": [j.name for j in config.joints],
+                "frames": trajectory_frames,
+            }
+
+        return result
     finally:
         p.disconnect(physics_client)

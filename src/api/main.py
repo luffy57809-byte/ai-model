@@ -13,6 +13,8 @@ from src.simulation.runner import run_smoke_test
 from src.analysis.torque_check import compute_static_torques
 from src.simulation.lift_test import run_lift_test
 from src.ai_layer.report_generator import generate_report
+from src.storage import config_store
+from src.analysis.mass_optimizer import optimize_link_masses
 
 app = FastAPI(title="Robot Sim API")
 
@@ -102,6 +104,7 @@ def analyze_arm(
     config: ArmConfig,
     include_lift_test: bool = Query(True, description="Run the dynamic PyBullet lift test (slower, ~3 sim-seconds)."),
     include_report: bool = Query(False, description="Generate an LLM report - requires GEMINI_API_KEY, and uses your free-tier quota."),
+    include_trajectory: bool = Query(False, description="Record a joint-angle trajectory (for 3D animation playback). Only used if include_lift_test is also true."),
 ):
     """
     The real entry point: submit ANY arm design (not just the built-in
@@ -129,7 +132,7 @@ def analyze_arm(
 
     if include_lift_test:
         try:
-            response["lift_test"] = run_lift_test(config)
+            response["lift_test"] = run_lift_test(config, record_trajectory=include_trajectory)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Lift test failed: {exc}")
 
@@ -144,6 +147,53 @@ def analyze_arm(
             raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
 
     return response
+
+
+@app.post("/designs")
+def save_design_endpoint(config: ArmConfig):
+    config_errors = validate_config(config)
+    if config_errors:
+        raise HTTPException(status_code=400, detail={"config_errors": config_errors})
+    return config_store.save_design(config)
+
+
+@app.get("/designs")
+def list_designs_endpoint():
+    return config_store.list_designs()
+
+
+@app.get("/designs/{slug}")
+def get_design_endpoint(slug: str):
+    try:
+        config = config_store.load_design(slug)
+        return config.model_dump()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.delete("/designs/{slug}")
+def delete_design_endpoint(slug: str):
+    deleted = config_store.delete_design(slug)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"No saved design found for '{slug}'")
+    return {"deleted": True, "slug": slug}
+
+
+@app.post("/optimize/mass")
+def optimize_mass_endpoint(
+    config: ArmConfig,
+    safety_margin: float = Query(0.2, ge=0, lt=1, description="Required torque margin after optimization."),
+    min_mass_kg: float = Query(0.1, gt=0, description="Floor on any individual link's mass."),
+):
+    """
+    Finds the lightest possible link masses (via a real linear program) that
+    keep every joint within the requested safety margin. Does not change
+    link lengths, joint torque ratings, or payload - only link masses.
+    """
+    config_errors = validate_config(config)
+    if config_errors:
+        raise HTTPException(status_code=400, detail={"config_errors": config_errors})
+    return optimize_link_masses(config, safety_margin=safety_margin, min_mass_kg=min_mass_kg)
 
 
 # Mounted last and deliberately: Starlette matches routes in registration
