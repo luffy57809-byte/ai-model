@@ -4,7 +4,7 @@ from src.api.main import app
 client = TestClient(app)
 
 
-def test_analyze_arm_accepts_the_two_link_sample():
+def test_analyze_arm_accepts_the_two_link_sample(auth_headers):
     body = {
         "name": "two_link_arm",
         "links": [
@@ -22,7 +22,7 @@ def test_analyze_arm_accepts_the_two_link_sample():
         "payload_mass_kg": 0.5,
     }
 
-    response = client.post("/analyze/arm", json=body)
+    response = client.post("/analyze/arm", json=body, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
 
@@ -32,7 +32,7 @@ def test_analyze_arm_accepts_the_two_link_sample():
     assert "report" not in data
 
 
-def test_analyze_arm_with_a_genuinely_different_design():
+def test_analyze_arm_with_a_genuinely_different_design(auth_headers):
     body = {
         "name": "three_link_test_arm",
         "links": [
@@ -54,7 +54,7 @@ def test_analyze_arm_with_a_genuinely_different_design():
         "payload_mass_kg": 1.0,
     }
 
-    response = client.post("/analyze/arm", json=body)
+    response = client.post("/analyze/arm", json=body, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
 
@@ -68,7 +68,7 @@ def test_analyze_arm_with_a_genuinely_different_design():
     assert lift_joint3["sag_deg"] > 5.0
 
 
-def test_analyze_arm_rejects_invalid_config_with_clear_error():
+def test_analyze_arm_rejects_invalid_config_with_clear_error(auth_headers):
     body = {
         "name": "broken_arm",
         "links": [
@@ -81,12 +81,11 @@ def test_analyze_arm_rejects_invalid_config_with_clear_error():
         "payload_mass_kg": 0.0,
     }
 
-    response = client.post("/analyze/arm", json=body)
+    response = client.post("/analyze/arm", json=body, headers=auth_headers)
     assert response.status_code == 400
     assert "nonexistent_link" in str(response.json())
 
-
-def test_analyze_arm_can_skip_lift_test_for_speed():
+def test_analyze_arm_can_skip_lift_test_for_speed(auth_headers):
     body = {
         "name": "quick_check",
         "links": [
@@ -100,7 +99,7 @@ def test_analyze_arm_can_skip_lift_test_for_speed():
         "payload_mass_kg": 0.0,
     }
 
-    response = client.post("/analyze/arm?include_lift_test=false", json=body)
+    response = client.post("/analyze/arm?include_lift_test=false", json=body, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert "lift_test" not in data

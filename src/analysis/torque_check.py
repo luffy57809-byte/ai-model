@@ -3,39 +3,31 @@ Static torque capability check.
 
 No PyBullet, no simulation - just the free-body-diagram physics you'd do
 by hand on paper. For each joint, computes the torque required to hold the
-arm fully extended horizontally (the worst-case pose for gravity loading -
-maximum lever arm on every downstream mass), and compares it to that
-joint's max_torque_nm.
+arm fully extended horizontally (the worst-case pose for gravity loading),
+and compares it to that joint's max_torque_nm.
 
-ASSUMPTION (important, document this to the user): this treats the arm as
-a planar serial chain laid out flat and horizontal, base to end effector,
-in a straight line. That's the correct worst case for a simple planar arm
-like the two-link sample. It is a simplification for arms with joints on
-different rotation axes (e.g. a joint that rotates about a vertical axis
-doesn't actually lift anything against gravity in that configuration) -
-a full 3D worst-case pose search is future work, not this check.
-
-config.joints and config.links are assumed to be listed in serial order,
-base to end effector (joint[i] drives link[i], which sits between
-joint[i] and joint[i+1]).
+MESH LINKS: for a plain cylinder link, the center of mass is assumed to
+sit at length_m/2 (the geometric center of a uniform cylinder). For a
+mesh-based link, we use the REAL computed com_offset_m instead - a mesh's
+mass isn't necessarily centered on its bounding box (e.g. a link with a
+motor housing lump at one end has its real COM shifted toward that end).
+This is one of the concrete accuracy improvements mesh support buys you
+over the cylinder approximation.
 """
 
-from src.urdf_generator.schema import ArmConfig
+from src.urdf_generator.schema import ArmConfig, Link
 
 GRAVITY = 9.81
 
 
+def _distance_to_com(link: Link) -> float:
+    """Distance from the link's own proximal joint to its center of mass."""
+    if link.is_mesh_based():
+        return link.com_offset_m
+    return link.length_m / 2.0
+
+
 def compute_static_torques(config: ArmConfig) -> list[dict]:
-    """
-    Returns one result dict per joint, in the same order as config.joints:
-      {
-        "joint_name": str,
-        "required_torque_nm": float,   # to hold the fully-extended horizontal pose
-        "max_torque_nm": float,        # from the joint's spec
-        "margin_percent": float,       # positive = spare capacity, negative = undersized
-        "passes": bool,
-      }
-    """
     if len(config.links) != len(config.joints):
         raise ValueError(
             "This check assumes one link per joint in serial order "
@@ -54,7 +46,7 @@ def compute_static_torques(config: ArmConfig) -> list[dict]:
 
         for k in range(i, n):
             link_k = config.links[k]
-            distance_to_com = cumulative_distance + (link_k.length_m / 2.0)
+            distance_to_com = cumulative_distance + _distance_to_com(link_k)
             required_torque += GRAVITY * link_k.mass_kg * distance_to_com
             cumulative_distance += link_k.length_m
 

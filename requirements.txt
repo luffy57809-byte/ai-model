@@ -1,10 +1,19 @@
+# Runtime dependencies - what the deployed API actually needs.
 pybullet==3.2.6
-numpy==1.26.4
+numpy==2.2.6
 fastapi==0.111.0
 uvicorn[standard]==0.30.1
 pydantic==2.7.4
 scipy==1.13.1
-pytest==8.2.2
 trimesh==4.4.1
-google-genai
 python-multipart==0.0.9
+pandas==3.0.5
+scikit-learn==1.9.0
+joblib==1.5.3
+cadquery==2.8.0
+cadquery-ocp==7.9.3.1.1
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+bcrypt==5.0.0
+pyjwt==2.9.0
+slowapi==0.1.9

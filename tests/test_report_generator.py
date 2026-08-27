@@ -1,6 +1,6 @@
-import os
 import json
 import pytest
+import requests
 from unittest.mock import patch, MagicMock
 
 from src.ai_layer.report_generator import generate_report, _build_user_message
@@ -9,12 +9,12 @@ from src.analysis.torque_check import compute_static_torques
 from src.simulation.lift_test import run_lift_test
 
 
-def test_missing_api_key_raises_clear_error(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+def test_unreachable_ollama_raises_clear_error(monkeypatch):
+    monkeypatch.setattr("src.ai_layer.report_generator.OLLAMA_URL", "http://localhost:1")
     config = two_link_arm()
     torque_results = compute_static_torques(config)
 
-    with pytest.raises(RuntimeError, match="GEMINI_API_KEY is not set"):
+    with pytest.raises(RuntimeError, match="Could not reach Ollama"):
         generate_report(config.name, torque_results)
 
 
@@ -31,22 +31,27 @@ def test_user_message_contains_real_numbers_not_invented_ones():
     assert parsed["dynamic_lift_test"] == lift_results
 
 
-def test_generate_report_calls_api_with_expected_shape(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-testing")
+def test_generate_report_calls_ollama_with_expected_shape(monkeypatch):
+    config = two_link_arm()
+    torque_results = compute_static_torques(config)
 
-    fake_response = MagicMock()
-    fake_response.text = "Mock report: all joints pass with healthy margins."
+    fake_health_response = MagicMock()
+    fake_health_response.raise_for_status = MagicMock()
 
-    with patch("src.ai_layer.report_generator.genai.Client") as MockClient:
-        mock_instance = MockClient.return_value
-        mock_instance.models.generate_content.return_value = fake_response
+    fake_generate_response = MagicMock()
+    fake_generate_response.raise_for_status = MagicMock()
+    fake_generate_response.json.return_value = {
+        "response": "Mock report: all joints pass with healthy margins."
+    }
 
-        config = two_link_arm()
-        torque_results = compute_static_torques(config)
+    with patch("requests.get", return_value=fake_health_response) as mock_get, \
+         patch("requests.post", return_value=fake_generate_response) as mock_post:
         report = generate_report(config.name, torque_results)
 
         assert report == "Mock report: all joints pass with healthy margins."
-        mock_instance.models.generate_content.assert_called_once()
-        call_kwargs = mock_instance.models.generate_content.call_args.kwargs
-        assert call_kwargs["model"] == "gemini-3.5-flash"
-        assert "two_link_arm" in call_kwargs["contents"]
+        mock_get.assert_called_once()
+        mock_post.assert_called_once()
+
+        call_kwargs = mock_post.call_args.kwargs
+        assert call_kwargs["json"]["model"] == "llama3.2"
+        assert "two_link_arm" in call_kwargs["json"]["prompt"]

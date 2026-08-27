@@ -1,22 +1,36 @@
+# Local dev database - never commit real or dev data
+data/app.db
+
+# Local mesh uploads - user data, not code
+data/meshes/*
+
+# Generated datasets - regenerable from src/ml/generate_dataset*.py
+data/lift_test_dataset*.csv
+
+# Old file-based saved designs (superseded by the database)
+data/saved_designs/
+
+# Scratch test files created during development
+*.stl
+*.step
+test_part.step
+
+# Old RL experiment pickles - not needed for the deployed app
+data/models/*.pkl
+data/models/elbow_*.joblib
+data/models/shoulder_*.joblib
+
+# Python
 __pycache__/
 *.pyc
-*.pyo
-.venv/
-venv/
-.env
 .pytest_cache/
-.mypy_cache/
-*.egg-info/
-build/
-dist/
 
-# generated artifacts
-data/generated_urdf/
-*.log
+# Virtual environments
+venv/
+.venv/
 
-# editor
-.vscode/
-.idea/
+# Editor artifacts
+*.bak
 
-# OS
-.DS_Store
+# Dev-only requirements (production uses requirements.txt)
+requirements-dev.txt

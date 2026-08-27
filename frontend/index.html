@@ -235,6 +235,40 @@
   .save-btn:hover { background: rgba(240, 149, 90, 0.1); }
   .save-btn:disabled { border-color: var(--blueprint-line); color: var(--blueprint-dim); cursor: not-allowed; }
 
+  .mesh-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--pass-cyan);
+    border: 1px solid var(--pass-cyan);
+    padding: 2px 6px;
+    border-radius: 2px;
+    margin-right: 6px;
+  }
+  .attach-mesh-btn, .remove-mesh-btn {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+    margin-top: 8px;
+    margin-right: 6px;
+  }
+  .attach-mesh-btn {
+    background: none;
+    border: 1px solid var(--pass-cyan);
+    color: var(--pass-cyan);
+  }
+  .attach-mesh-btn:disabled {
+    border-color: var(--blueprint-line);
+    color: var(--blueprint-dim);
+    cursor: not-allowed;
+  }
+  .remove-mesh-btn {
+    background: none;
+    border: 1px solid var(--fail-red);
+    color: var(--fail-red);
+  }
+
   .results-empty {
     color: var(--blueprint-dim);
     font-family: var(--mono);
@@ -402,6 +436,14 @@
     height: 100%;
   }
 
+  .motor-info {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--blueprint-dim);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
   .viewer-empty-note {
     font-family: var(--mono);
     font-size: 13px;
@@ -419,14 +461,41 @@
 </script>
 </head>
 <body>
-
 <header>
   <p class="eyebrow">// arm bench v1</p>
   <h1>Robot Arm Design Analyzer</h1>
   <p class="subhead">Define a serial robotic arm. Get a real static torque check, a real PyBullet dynamic lift test, and an optional plain-English design review — all grounded in the physics actually computed, not guessed.</p>
+  <div id="auth-status-bar" style="display:none; margin-top:12px; font-family:var(--mono); font-size:12px; color:var(--blueprint-dim);">
+    Logged in as <span id="auth-status-email"></span>
+    <button type="button" id="logout-btn" style="margin-left:12px; background:none; border:1px solid var(--blueprint-line); color:var(--blueprint-ink); padding:4px 10px; cursor:pointer; border-radius:4px;">Log out</button>
+  </div>
 </header>
 
-<main>
+<section id="auth-gate" class="panel" data-tag="LOGIN REQUIRED" style="max-width:420px; margin:40px auto; padding:24px;">
+  <div id="auth-form-login">
+    <h2 style="margin-top:0;">Log in</h2>
+    <label>Email</label>
+    <input type="email" id="login-email" style="width:100%; margin-bottom:10px;">
+    <label>Password</label>
+    <input type="password" id="login-password" style="width:100%; margin-bottom:10px;">
+    <button type="button" id="login-submit-btn" class="run-btn" style="width:100%;">Log in</button>
+    <div id="login-status" style="font-family:var(--mono); font-size:11px; color:var(--fail-red); margin-top:8px;"></div>
+    <p style="margin-top:16px; font-size:13px;">No account? <a href="#" id="show-signup-link" style="color:var(--pass-cyan);">Sign up</a></p>
+  </div>
+
+  <div id="auth-form-signup" style="display:none;">
+    <h2 style="margin-top:0;">Sign up</h2>
+    <label>Email</label>
+    <input type="email" id="signup-email" style="width:100%; margin-bottom:10px;">
+    <label>Password (min. 8 characters)</label>
+    <input type="password" id="signup-password" style="width:100%; margin-bottom:10px;">
+    <button type="button" id="signup-submit-btn" class="run-btn" style="width:100%;">Sign up</button>
+    <div id="signup-status" style="font-family:var(--mono); font-size:11px; color:var(--fail-red); margin-top:8px;"></div>
+    <p style="margin-top:16px; font-size:13px;">Already have an account? <a href="#" id="show-login-link" style="color:var(--pass-cyan);">Log in</a></p>
+  </div>
+</section>
+
+<main id="main-app-content" style="display:none;">
   <form class="panel" data-tag="INPUT — ARM CONFIG" id="arm-form">
     <fieldset>
       <legend>identity</legend>
@@ -446,6 +515,16 @@
         <button type="button" class="add-btn" id="load-design-btn" style="flex:1;">Load</button>
         <button type="button" class="remove-btn" id="delete-design-btn" style="flex:1; margin-top:0; padding:8px;">Delete</button>
       </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>upload mesh (optional, for a link)</legend>
+      <label for="mesh-file-input">STL file</label>
+      <input type="file" id="mesh-file-input" accept=".stl">
+      <label for="mesh-target-mass">Target mass (kg)</label>
+      <input type="number" id="mesh-target-mass" value="0.5" step="0.01" min="0.001">
+      <button type="button" class="add-btn" id="upload-mesh-btn" style="margin-top:8px;">Upload mesh</button>
+      <div id="mesh-upload-status" style="font-family:var(--mono); font-size:11px; color:var(--blueprint-dim); margin-top:8px; line-height:1.5;"></div>
     </fieldset>
 
     <fieldset>
@@ -469,10 +548,73 @@
       <label for="include-report" style="margin:0;">generate LLM report (needs GEMINI_API_KEY on the server)</label>
     </div>
 
-    <button type="submit" class="run-btn" id="run-btn">Run analysis</button>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button type="submit" class="run-btn" id="run-btn" style="flex:1;">Run analysis</button>
+      <button type="button" class="add-btn" id="predict-fast-btn" style="flex:1;">Predict (fast, ML estimate)</button>
+    </div>
+    <div id="predict-fast-status" style="font-family:var(--mono); font-size:11px; color:var(--blueprint-dim); margin-top:8px; line-height:1.5;"></div>
     <button type="button" class="save-btn" id="save-design-btn">Save this design</button>
-  </form>
 
+    <fieldset>
+      <legend>reach motion (optional - requires a payload &gt; 0)</legend>
+      <div class="row-grid">
+        <div><label>Target X (m)</label><input type="number" id="reach-target-x" value="0.4" step="0.01"></div>
+        <div><label>Target Y (m)</label><input type="number" id="reach-target-y" value="0.0" step="0.01"></div>
+      </div>
+      <label>Target Z (m)</label>
+      <input type="number" id="reach-target-z" value="0.85" step="0.01">
+      <button type="button" class="add-btn" id="plan-reach-btn" style="margin-top:8px;">Plan reach motion</button>
+      <div id="reach-status" style="font-family:var(--mono); font-size:11px; color:var(--blueprint-dim); margin-top:8px; line-height:1.5;"></div>
+    </fieldset>
+  </form>
+</form>
+  <section class="panel" data-tag="QUICK ASSEMBLY — FROM MESHES" id="quick-assembly-panel">
+    <fieldset>
+      <legend>1. Upload part meshes</legend>
+      <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:8px;">
+        <div style="flex:1;">
+          <label>STL file</label>
+          <input type="file" id="qa-mesh-file-input" accept=".stl,.step,.stp">
+        </div>
+        <div style="width:120px;">
+          <label>Target mass (kg)</label>
+          <input type="number" id="qa-mesh-target-mass" value="1.0" step="0.01" min="0.001">
+        </div>
+        <button type="button" class="add-btn" id="qa-upload-mesh-btn">Upload part</button>
+      </div>
+      <div id="qa-mesh-upload-status" style="font-family:var(--mono); font-size:11px; color:var(--blueprint-dim); margin-top:4px; line-height:1.5;"></div>
+      <div id="qa-uploaded-meshes-list" style="font-family:var(--mono); font-size:11px; color:var(--blueprint-dim); margin-top:8px;"></div>
+    </fieldset>
+
+    <fieldset style="margin-top:16px;">
+      <legend>2. Chain links (in order, base to tip)</legend>
+      <div id="qa-links-container"></div>
+      <button type="button" class="add-btn" id="qa-add-link">+ add link</button>
+    </fieldset>
+
+    <fieldset style="margin-top:16px;">
+      <legend>3. Joints (one per link, connecting it to its parent)</legend>
+      <div id="qa-joints-container"></div>
+      <button type="button" class="add-btn" id="qa-add-joint">+ add joint</button>
+    </fieldset>
+
+    <fieldset style="margin-top:16px;">
+      <legend>4. Assembly name &amp; payload</legend>
+      <div style="display:flex; gap:12px;">
+        <div style="flex:1;">
+          <label>Assembly name</label>
+          <input type="text" id="qa-arm-name" value="mesh_assembled_arm">
+        </div>
+        <div style="width:140px;">
+          <label>Payload mass (kg)</label>
+          <input type="number" id="qa-payload-mass" value="0.5" step="0.01" min="0">
+        </div>
+      </div>
+      <button type="button" class="add-btn" id="qa-assemble-btn" style="margin-top:12px;">Assemble &amp; analyze</button>
+      <div id="qa-assembly-status" style="font-family:var(--mono); font-size:11px; color:var(--blueprint-dim); margin-top:8px; line-height:1.5;"></div>
+    </fieldset>
+  </section>
+  <section class="panel" data-tag="OUTPUT — RESULTS" id="results-panel">
   <section class="panel" data-tag="OUTPUT — RESULTS" id="results-panel">
     <div class="results-empty" id="results-empty">
       No run yet. Define at least one link and one joint, then run the analysis.<br><br>
@@ -504,6 +646,9 @@
       <div><label>Mass (kg)</label><input type="number" class="link-mass" value="1.0" step="0.01" min="0.001"></div>
       <div><label>Radius (m)</label><input type="number" class="link-radius" value="0.03" step="0.005" min="0.001"></div>
     </div>
+    <span class="mesh-badge" style="display:none;"></span>
+    <button type="button" class="attach-mesh-btn" disabled>Attach mesh</button>
+    <button type="button" class="remove-mesh-btn" style="display:none;">Remove mesh</button>
     <button type="button" class="remove-btn">remove</button>
   </div>
 </template>
@@ -521,6 +666,13 @@
           <option value="prismatic">prismatic</option>
         </select>
       </div>
+      <div>
+        <label>Motor (optional)</label>
+        <select class="joint-motor">
+          <option value="">custom (manual entry)</option>
+        </select>
+        <div class="motor-info"></div>
+      </div>
       <div><label>Max torque (Nm)</label><input type="number" class="joint-torque" value="10.0" step="0.1" min="0.001"></div>
       <div><label>Max velocity (rad/s)</label><input type="number" class="joint-velocity" value="2.0" step="0.1" min="0.001"></div>
       <div><label>Axis X</label><input type="number" class="joint-axis-x" value="0" step="1"></div>
@@ -533,8 +685,140 @@
     <button type="button" class="remove-btn">remove</button>
   </div>
 </template>
-
+<template id="qa-link-template">
+  <div class="qa-link-row" style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+    <span class="row-index"></span>
+    <input type="text" class="qa-link-name" placeholder="link name" value="link" style="flex:1;">
+    <select class="qa-link-mesh-select" style="flex:2;">
+      <option value="">-- select uploaded mesh --</option>
+    </select>
+    <button type="button" class="remove-btn">remove</button>
+  </div>
+</template>
 <script>
+
+
+// ==================== Authentication ====================
+
+let authToken = localStorage.getItem("authToken");
+let authEmail = localStorage.getItem("authEmail");
+
+function authFetch(url, options = {}) {
+  const headers = Object.assign({}, options.headers || {}, {
+    "Authorization": "Bearer " + authToken,
+  });
+  return fetch(url, Object.assign({}, options, { headers }));
+}
+
+function showLoggedInUI() {
+  document.getElementById("auth-gate").style.display = "none";
+  document.getElementById("main-app-content").style.display = "block";
+  document.getElementById("auth-status-bar").style.display = "block";
+  document.getElementById("auth-status-email").textContent = authEmail || "";
+
+  // These need a valid token, so they only run here - not at
+  // unconditional page load - and correctly re-run on every login,
+  // fixing the earlier bug where a failed pre-login load never retried.
+  if (typeof loadMotorLibrary === "function") loadMotorLibrary();
+  if (typeof refreshSavedDesignsList === "function") refreshSavedDesignsList();
+}
+
+function showLoggedOutUI() {
+  document.getElementById("auth-gate").style.display = "block";
+  document.getElementById("main-app-content").style.display = "none";
+  document.getElementById("auth-status-bar").style.display = "none";
+}
+
+// Deferred until the whole page has loaded (window 'load', not just
+// this script block finishing) - loadMotorLibrary/refreshSavedDesignsList
+// are defined in a LATER <script> block, and calling showLoggedInUI()
+// too early (e.g. on a page reload while already logged in, before
+// those later scripts have run) would silently skip loading them.
+window.addEventListener("load", () => {
+  if (authToken) {
+    showLoggedInUI();
+  } else {
+    showLoggedOutUI();
+  }
+});
+
+document.getElementById("show-signup-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  document.getElementById("auth-form-login").style.display = "none";
+  document.getElementById("auth-form-signup").style.display = "block";
+});
+
+document.getElementById("show-login-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  document.getElementById("auth-form-signup").style.display = "none";
+  document.getElementById("auth-form-login").style.display = "block";
+});
+
+document.getElementById("login-submit-btn").addEventListener("click", async () => {
+  const email = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-password").value;
+  const status = document.getElementById("login-status");
+  status.textContent = "";
+
+  try {
+    const response = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      status.textContent = data.detail || "Login failed.";
+      return;
+    }
+
+    authToken = data.access_token;
+    authEmail = data.email;
+    localStorage.setItem("authToken", authToken);
+    localStorage.setItem("authEmail", authEmail);
+    showLoggedInUI();
+  } catch (err) {
+    status.textContent = "Could not reach the server: " + err.message;
+  }
+});
+
+document.getElementById("signup-submit-btn").addEventListener("click", async () => {
+  const email = document.getElementById("signup-email").value.trim();
+  const password = document.getElementById("signup-password").value;
+  const status = document.getElementById("signup-status");
+  status.textContent = "";
+
+  try {
+    const response = await fetch("/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      status.textContent = data.detail || "Signup failed.";
+      return;
+    }
+
+    authToken = data.access_token;
+    authEmail = data.email;
+    localStorage.setItem("authToken", authToken);
+    localStorage.setItem("authEmail", authEmail);
+    showLoggedInUI();
+  } catch (err) {
+    status.textContent = "Could not reach the server: " + err.message;
+  }
+});
+
+document.getElementById("logout-btn").addEventListener("click", () => {
+  authToken = null;
+  authEmail = null;
+  localStorage.removeItem("authToken");
+  localStorage.removeItem("authEmail");
+  showLoggedOutUI();
+});
 const linksContainer = document.getElementById('links-container');
 const jointsContainer = document.getElementById('joints-container');
 const linkTemplate = document.getElementById('link-template');
@@ -557,10 +841,323 @@ function addLink(name, length, mass, radius) {
     row.remove();
     reindexRows(linksContainer, '.link-row');
   });
+  row.querySelector('.attach-mesh-btn').addEventListener('click', () => attachMeshToLinkRow(row));
+  row.querySelector('.remove-mesh-btn').addEventListener('click', () => removeMeshFromLinkRow(row));
   linksContainer.appendChild(node);
   reindexRows(linksContainer, '.link-row');
 }
 
+let lastUploadedMesh = null;
+
+function attachMeshToLinkRow(row) {
+  if (!lastUploadedMesh) return;
+  const m = lastUploadedMesh;
+  row.dataset.meshId = m.mesh_id;
+  row.dataset.comOffsetM = m.com_offset_m;
+  row.dataset.inertiaIxx = m.inertia_ixx;
+  row.dataset.inertiaIyy = m.inertia_iyy;
+  row.dataset.inertiaIzz = m.inertia_izz;
+  row.dataset.inertiaIxy = m.inertia_ixy;
+  row.dataset.inertiaIxz = m.inertia_ixz;
+  row.dataset.inertiaIyz = m.inertia_iyz;
+
+  row.querySelector('.link-length').value = m.length_m;
+  row.querySelector('.link-mass').value = m.mass_kg;
+  row.querySelector('.link-length').disabled = true;
+  row.querySelector('.link-mass').disabled = true;
+  row.querySelector('.link-radius').disabled = true;
+
+  const badge = row.querySelector('.mesh-badge');
+  badge.textContent = 'MESH: ' + m.mesh_id.slice(0, 8);
+  badge.style.display = 'inline';
+  row.querySelector('.remove-mesh-btn').style.display = 'inline';
+}
+
+function removeMeshFromLinkRow(row) {
+  delete row.dataset.meshId;
+  delete row.dataset.comOffsetM;
+  delete row.dataset.inertiaIxx;
+  delete row.dataset.inertiaIyy;
+  delete row.dataset.inertiaIzz;
+  delete row.dataset.inertiaIxy;
+  delete row.dataset.inertiaIxz;
+  delete row.dataset.inertiaIyz;
+
+  row.querySelector('.link-length').disabled = false;
+  row.querySelector('.link-mass').disabled = false;
+  row.querySelector('.link-radius').disabled = false;
+  row.querySelector('.mesh-badge').style.display = 'none';
+  row.querySelector('.remove-mesh-btn').style.display = 'none';
+}
+
+const meshFileInput = document.getElementById('mesh-file-input');
+const meshTargetMassInput = document.getElementById('mesh-target-mass');
+const uploadMeshBtn = document.getElementById('upload-mesh-btn');
+const meshUploadStatus = document.getElementById('mesh-upload-status');
+
+uploadMeshBtn.addEventListener('click', async () => {
+  const file = meshFileInput.files[0];
+  if (!file) {
+    meshUploadStatus.textContent = 'Choose an .stl file first.';
+    return;
+  }
+  const targetMass = parseFloat(meshTargetMassInput.value);
+  if (!targetMass || targetMass <= 0) {
+    meshUploadStatus.textContent = 'Enter a positive target mass first.';
+    return;
+  }
+
+  uploadMeshBtn.disabled = true;
+  uploadMeshBtn.textContent = 'Uploading...';
+  meshUploadStatus.textContent = '';
+
+  try {
+    const isStep = /\.(step|stp)$/i.test(file.name);
+    const uploadUrl = isStep ? '/meshes/upload_step' : '/meshes/upload';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('target_mass_kg', targetMass);
+
+    const response = await authFetch(uploadUrl, { method: 'POST', body: formData });
+    const data = await response.json();
+
+    if (!response.ok) {
+      meshUploadStatus.textContent = 'Upload failed: ' + (data.detail || 'unknown error');
+      return;
+    }
+
+    lastUploadedMesh = data;
+    meshUploadStatus.innerHTML =
+      `Uploaded. mass=${data.mass_kg.toFixed(3)}kg, length=${data.length_m.toFixed(3)}m, ` +
+      `com_offset=${data.com_offset_m.toFixed(3)}m, watertight=${data.is_watertight}.<br>` +
+      `Click "Attach mesh" on a link row below to use it.`;
+
+    document.querySelectorAll('.attach-mesh-btn').forEach(btn => { btn.disabled = false; });
+  } catch (err) {
+    meshUploadStatus.textContent = 'Could not reach the server: ' + err.message;
+  } finally {
+    uploadMeshBtn.disabled = false;
+    uploadMeshBtn.textContent = 'Upload mesh';
+  }
+});
+// ==================== Quick Assembly (from meshes) ====================
+
+const qaMeshFileInput = document.getElementById('qa-mesh-file-input');
+const qaMeshTargetMassInput = document.getElementById('qa-mesh-target-mass');
+const qaUploadMeshBtn = document.getElementById('qa-upload-mesh-btn');
+const qaMeshUploadStatus = document.getElementById('qa-mesh-upload-status');
+const qaUploadedMeshesList = document.getElementById('qa-uploaded-meshes-list');
+const qaLinksContainer = document.getElementById('qa-links-container');
+const qaJointsContainer = document.getElementById('qa-joints-container');
+const qaLinkTemplate = document.getElementById('qa-link-template');
+const qaAssembleBtn = document.getElementById('qa-assemble-btn');
+const qaAssemblyStatus = document.getElementById('qa-assembly-status');
+
+let qaUploadedMeshes = [];
+
+function qaRefreshMeshSelects() {
+  document.querySelectorAll('.qa-link-mesh-select').forEach(select => {
+    const currentValue = select.value;
+    select.innerHTML = '<option value="">-- select uploaded mesh --</option>' +
+      qaUploadedMeshes.map(m =>
+        `<option value="${m.mesh_id}">${m.label} (${m.mass_kg.toFixed(3)}kg, ${m.length_m.toFixed(3)}m)</option>`
+      ).join('');
+    if (qaUploadedMeshes.some(m => m.mesh_id === currentValue)) {
+      select.value = currentValue;
+    }
+  });
+}
+
+function qaRenderUploadedMeshesList() {
+  if (qaUploadedMeshes.length === 0) {
+    qaUploadedMeshesList.textContent = '';
+    return;
+  }
+  qaUploadedMeshesList.innerHTML = 'Uploaded this session: ' +
+    qaUploadedMeshes.map(m => m.label).join(', ');
+}
+
+qaUploadMeshBtn.addEventListener('click', async () => {
+  const file = qaMeshFileInput.files[0];
+  if (!file) {
+    qaMeshUploadStatus.textContent = 'Choose an .stl file first.';
+    return;
+  }
+  const targetMass = parseFloat(qaMeshTargetMassInput.value);
+  if (!targetMass || targetMass <= 0) {
+    qaMeshUploadStatus.textContent = 'Enter a positive target mass first.';
+    return;
+  }
+
+  qaUploadMeshBtn.disabled = true;
+  qaUploadMeshBtn.textContent = 'Uploading...';
+  qaMeshUploadStatus.textContent = '';
+
+  try {
+    const isStep = /\.(step|stp)$/i.test(file.name);
+    const uploadUrl = isStep ? '/meshes/upload_step' : '/meshes/upload';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('target_mass_kg', targetMass);
+    const response = await authFetch(uploadUrl, { method: 'POST', body: formData });
+    const data = await response.json();
+
+    if (!response.ok) {
+      qaMeshUploadStatus.textContent = 'Upload failed: ' + (data.detail || 'unknown error');
+      return;
+    }
+
+    const label = file.name.replace(/\.stl$/i, '');
+    qaUploadedMeshes.push({ ...data, label });
+    qaMeshUploadStatus.textContent =
+      `Uploaded "${label}": mass=${data.mass_kg.toFixed(3)}kg, length=${data.length_m.toFixed(3)}m.`;
+    qaRefreshMeshSelects();
+    qaRenderUploadedMeshesList();
+    qaMeshFileInput.value = '';
+  } catch (err) {
+    qaMeshUploadStatus.textContent = 'Could not reach the server: ' + err.message;
+  } finally {
+    qaUploadMeshBtn.disabled = false;
+    qaUploadMeshBtn.textContent = 'Upload part';
+  }
+});
+
+function qaAddLink(name) {
+  const node = qaLinkTemplate.content.cloneNode(true);
+  const row = node.querySelector('.qa-link-row');
+  if (name !== undefined) row.querySelector('.qa-link-name').value = name;
+  row.querySelector('.remove-btn').addEventListener('click', () => {
+    row.remove();
+    reindexRows(qaLinksContainer, '.qa-link-row');
+  });
+  qaLinksContainer.appendChild(node);
+  reindexRows(qaLinksContainer, '.qa-link-row');
+  qaRefreshMeshSelects();
+}
+
+document.getElementById('qa-add-link').addEventListener('click', () => qaAddLink());
+document.getElementById('qa-add-joint').addEventListener('click', () => {
+  // Reuses the exact same joint-template/addJoint() as the main builder -
+  // same fields, same classes, so no duplicate joint UI logic.
+  const node = jointTemplate.content.cloneNode(true);
+  const row = node.querySelector('.joint-row');
+  row.querySelector('.remove-btn').addEventListener('click', () => {
+    row.remove();
+    reindexRows(qaJointsContainer, '.joint-row');
+  });
+  qaJointsContainer.appendChild(node);
+  reindexRows(qaJointsContainer, '.joint-row');
+});
+
+function qaBuildAssemblyRequest() {
+  const linkRows = Array.from(qaLinksContainer.querySelectorAll('.qa-link-row'));
+  const link_specs = linkRows.map(row => ({
+    name: row.querySelector('.qa-link-name').value.trim(),
+    mesh_id: row.querySelector('.qa-link-mesh-select').value,
+  }));
+
+  const jointRows = Array.from(qaJointsContainer.querySelectorAll('.joint-row'));
+  const joint_specs = jointRows.map(row => ({
+    name: row.querySelector('.joint-name').value.trim(),
+    joint_type: row.querySelector('.joint-type').value,
+    axis: [
+      parseFloat(row.querySelector('.joint-axis-x').value),
+      parseFloat(row.querySelector('.joint-axis-y').value),
+      parseFloat(row.querySelector('.joint-axis-z').value),
+    ],
+    lower_limit_rad: parseFloat(row.querySelector('.joint-lower').value),
+    upper_limit_rad: parseFloat(row.querySelector('.joint-upper').value),
+    max_torque_nm: parseFloat(row.querySelector('.joint-torque').value),
+    max_velocity_rad_s: parseFloat(row.querySelector('.joint-velocity').value),
+  }));
+
+  return {
+    name: document.getElementById('qa-arm-name').value.trim(),
+    link_specs,
+    joint_specs,
+    payload_mass_kg: parseFloat(document.getElementById('qa-payload-mass').value),
+  };
+}
+
+qaAssembleBtn.addEventListener('click', async () => {
+  const linkRows = Array.from(qaLinksContainer.querySelectorAll('.qa-link-row'));
+  if (linkRows.length === 0) {
+    qaAssemblyStatus.innerHTML = '<span style="color:#c0392b;">Add at least one link first.</span>';
+    return;
+  }
+  const missingMesh = linkRows.some(row => !row.querySelector('.qa-link-mesh-select').value);
+  if (missingMesh) {
+    qaAssemblyStatus.innerHTML = '<span style="color:#c0392b;">Every link needs an uploaded mesh selected.</span>';
+    return;
+  }
+
+  qaAssembleBtn.disabled = true;
+  qaAssembleBtn.textContent = 'Assembling...';
+  qaAssemblyStatus.textContent = '';
+
+  try {
+    const assemblyRequest = qaBuildAssemblyRequest();
+    const assembleResponse = await authFetch('/designs/from_meshes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(assemblyRequest),
+    });
+    const config = await assembleResponse.json();
+
+    if (!assembleResponse.ok) {
+      const detail = typeof config.detail === 'string' ? config.detail : JSON.stringify(config.detail, null, 2);
+      qaAssemblyStatus.innerHTML = `<div class="error-box">Assembly failed (${assembleResponse.status}):<br>${detail}</div>`;
+      return;
+    }
+
+    qaAssemblyStatus.textContent = 'Assembled. Running analysis...';
+
+    // Reuses the exact same analyze pipeline and render functions as the
+    // main builder form - no separate results/viewer code path.
+    const params = new URLSearchParams({
+      include_lift_test: true,
+      include_report: false,
+      include_trajectory: true,
+    });
+    const analyzeResponse = await authFetch(`/analyze/arm?${params}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const analysis = await analyzeResponse.json();
+
+    if (!analyzeResponse.ok) {
+      const detail = typeof analysis.detail === 'string' ? analysis.detail : JSON.stringify(analysis.detail, null, 2);
+      qaAssemblyStatus.innerHTML = `<div class="error-box">Analysis failed (${analyzeResponse.status}):<br>${detail}</div>`;
+      return;
+    }
+
+    const resultsEmpty = document.getElementById('results-empty');
+    const resultsContent = document.getElementById('results-content');
+    const liftTestByName = {};
+    if (analysis.lift_test) {
+      analysis.lift_test.joint_results.forEach(j => { liftTestByName[j.joint_name] = j; });
+    }
+    let html = '<div class="section-label">static torque check</div>';
+    html += renderTorqueCheck(analysis.torque_check, analysis.lift_test ? liftTestByName : null);
+    resultsEmpty.style.display = 'none';
+    resultsContent.style.display = 'block';
+    resultsContent.innerHTML = html;
+
+    if (window.renderArmViewer) {
+      window.renderArmViewer(config, analysis.torque_check, analysis.lift_test);
+    }
+
+    qaAssemblyStatus.textContent = 'Done - see results and 3D view below.';
+  } catch (err) {
+    qaAssemblyStatus.innerHTML = `<div class="error-box">Could not reach the API: ${err.message}</div>`;
+  } finally {
+    qaAssembleBtn.disabled = false;
+    qaAssembleBtn.textContent = 'Assemble & analyze';
+  }
+});
 function addJoint(name, type, torque, vel, ax, ay, az, lower, upper) {
   const node = jointTemplate.content.cloneNode(true);
   const row = node.querySelector('.joint-row');
@@ -577,9 +1174,114 @@ function addJoint(name, type, torque, vel, ax, ay, az, lower, upper) {
     row.remove();
     reindexRows(jointsContainer, '.joint-row');
   });
+  wireMotorDropdown(row);
   jointsContainer.appendChild(node);
   reindexRows(jointsContainer, '.joint-row');
 }
+
+let motorLibrary = [];
+
+async function loadMotorLibrary() {
+  try {
+    const response = await authFetch('/components/motors');
+    motorLibrary = await response.json();
+    document.querySelectorAll('.joint-motor').forEach(populateMotorSelect);
+  } catch (err) {
+    console.error('Could not load motor library:', err);
+  }
+}
+
+function populateMotorSelect(selectEl) {
+  const currentValue = selectEl.value;
+  selectEl.innerHTML = '<option value="">custom (manual entry)</option>';
+  motorLibrary.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = `${m.name} - ${m.stall_torque_nm.toFixed(2)}Nm, $${m.approx_price_usd}`;
+    selectEl.appendChild(opt);
+  });
+  if (currentValue) selectEl.value = currentValue;
+}
+
+function applyMotorToRow(row, motorId) {
+  const infoDiv = row.querySelector('.motor-info');
+  if (!motorId) {
+    delete row.dataset.motorId;
+    infoDiv.textContent = '';
+    return;
+  }
+  const motor = motorLibrary.find(m => m.id === motorId);
+  if (!motor) return;
+
+  row.querySelector('.joint-torque').value = motor.stall_torque_nm.toFixed(4);
+  row.querySelector('.joint-velocity').value = motor.max_velocity_rad_s.toFixed(3);
+  row.dataset.motorId = motorId;
+  infoDiv.textContent = `mass=${motor.mass_kg}kg, ~$${motor.approx_price_usd}. ${motor.notes}`;
+}
+
+function wireMotorDropdown(row) {
+  populateMotorSelect(row.querySelector('.joint-motor'));
+  row.querySelector('.joint-motor').addEventListener('change', (e) => applyMotorToRow(row, e.target.value));
+}
+
+
+document.getElementById('arm-form').addEventListener('click', async (event) => {
+  if (event.target.id !== 'plan-reach-btn') return;
+
+  const reachStatus = document.getElementById('reach-status');
+  const targetX = parseFloat(document.getElementById('reach-target-x').value);
+  const targetY = parseFloat(document.getElementById('reach-target-y').value);
+  const targetZ = parseFloat(document.getElementById('reach-target-z').value);
+
+  const config = buildConfig();
+  if (!config.payload_mass_kg || config.payload_mass_kg <= 0) {
+    reachStatus.textContent = 'Reach motion requires payload mass > 0 (set it in the "identity" section above).';
+    return;
+  }
+
+  reachStatus.textContent = 'Planning reach motion...';
+
+  try {
+    const params = new URLSearchParams({
+      target_x: targetX, target_y: targetY, target_z: targetZ,
+      record_trajectory: true,
+    });
+    const response = await authFetch(`/motion/reach?${params}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+      reachStatus.textContent = 'Failed: ' + detail;
+      return;
+    }
+
+    const reachableText = data.ik_result.reachable
+      ? `Target reachable (error: ${(data.ik_result.position_error_m * 1000).toFixed(1)}mm).`
+      : `Target NOT reachable within tolerance (error: ${(data.ik_result.position_error_m * 1000).toFixed(1)}mm) - may be out of range or this arm can't redirect toward it.`;
+
+    const jointLines = data.joint_results.map(j =>
+      `${j.joint_name}: ${j.motion_successful ? 'OK' : 'FAILED'} (torque ${j.max_applied_torque_nm}/${j.rated_torque_nm} Nm, tracking error ${(j.tracking_error_rad * 180 / Math.PI).toFixed(1)}deg)`
+    ).join('<br>');
+
+    reachStatus.innerHTML =
+      `${reachableText}<br>Duration: ${data.duration_s}s. Overall: ${data.overall_success ? 'SUCCESS' : 'FAILED'}<br>${jointLines}`;
+
+    const torqueCheckShaped = data.joint_results.map(j => ({
+      joint_name: j.joint_name,
+      passes: j.motion_successful,
+    }));
+
+    if (window.renderArmViewer) {
+      window.renderArmViewer(config, torqueCheckShaped, { trajectory: data.trajectory });
+    }
+  } catch (err) {
+    reachStatus.textContent = 'Could not reach the server: ' + err.message;
+  }
+});
 
 document.getElementById('add-link').addEventListener('click', () => addLink());
 document.getElementById('add-joint').addEventListener('click', () => addJoint());
@@ -599,7 +1301,7 @@ const saveDesignBtn = document.getElementById('save-design-btn');
 
 async function refreshSavedDesignsList() {
   try {
-    const response = await fetch('/designs');
+    const response = await authFetch('/designs');
     const designs = await response.json();
     const previousValue = savedDesignsSelect.value;
 
@@ -642,7 +1344,7 @@ saveDesignBtn.addEventListener('click', async () => {
   saveDesignBtn.disabled = true;
   saveDesignBtn.textContent = 'Saving...';
   try {
-    const response = await fetch('/designs', {
+    const response = await authFetch('/designs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
@@ -667,7 +1369,7 @@ loadDesignBtn.addEventListener('click', async () => {
   const slug = savedDesignsSelect.value;
   if (!slug) return;
   try {
-    const response = await fetch(`/designs/${slug}`);
+    const response = await authFetch(`/designs/${slug}`);
     if (!response.ok) {
       alert('Could not load that design - it may have been deleted.');
       await refreshSavedDesignsList();
@@ -687,7 +1389,7 @@ deleteDesignBtn.addEventListener('click', async () => {
   if (!confirm(`Delete saved design "${name}"? This can't be undone.`)) return;
 
   try {
-    const response = await fetch(`/designs/${slug}`, { method: 'DELETE' });
+    const response = await authFetch(`/designs/${slug}`, { method: 'DELETE' });
     if (!response.ok) {
       alert('Could not delete that design.');
       return;
@@ -698,15 +1400,27 @@ deleteDesignBtn.addEventListener('click', async () => {
   }
 });
 
-refreshSavedDesignsList();
 
 function buildConfig() {
-  const links = Array.from(linksContainer.querySelectorAll('.link-row')).map(row => ({
-    name: row.querySelector('.link-name').value.trim(),
-    length_m: parseFloat(row.querySelector('.link-length').value),
-    mass_kg: parseFloat(row.querySelector('.link-mass').value),
-    radius_m: parseFloat(row.querySelector('.link-radius').value),
-  }));
+  const links = Array.from(linksContainer.querySelectorAll('.link-row')).map(row => {
+    const base = {
+      name: row.querySelector('.link-name').value.trim(),
+      length_m: parseFloat(row.querySelector('.link-length').value),
+      mass_kg: parseFloat(row.querySelector('.link-mass').value),
+      radius_m: parseFloat(row.querySelector('.link-radius').value),
+    };
+    if (row.dataset.meshId) {
+      base.mesh_id = row.dataset.meshId;
+      base.com_offset_m = parseFloat(row.dataset.comOffsetM);
+      base.inertia_ixx = parseFloat(row.dataset.inertiaIxx);
+      base.inertia_iyy = parseFloat(row.dataset.inertiaIyy);
+      base.inertia_izz = parseFloat(row.dataset.inertiaIzz);
+      base.inertia_ixy = parseFloat(row.dataset.inertiaIxy);
+      base.inertia_ixz = parseFloat(row.dataset.inertiaIxz);
+      base.inertia_iyz = parseFloat(row.dataset.inertiaIyz);
+    }
+    return base;
+  });
 
   const jointRows = Array.from(jointsContainer.querySelectorAll('.joint-row'));
   const joints = jointRows.map((row, i) => {
@@ -794,7 +1508,7 @@ document.getElementById('arm-form').addEventListener('submit', async (e) => {
   });
 
   try {
-    const response = await fetch(`/analyze/arm?${params}`, {
+    const response = await authFetch(`/analyze/arm?${params}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
@@ -820,6 +1534,17 @@ document.getElementById('arm-form').addEventListener('submit', async (e) => {
       html += `<div class="report-box">${data.report}</div>`;
     }
 
+    const jointRowsForCost = Array.from(jointsContainer.querySelectorAll('.joint-row'));
+    const motorsUsed = jointRowsForCost
+      .map(row => motorLibrary.find(m => m.id === row.dataset.motorId))
+      .filter(m => m !== undefined);
+    if (motorsUsed.length > 0) {
+      const totalCost = motorsUsed.reduce((sum, m) => sum + m.approx_price_usd, 0);
+      html += '<div class="section-label">estimated cost</div>';
+      html += `<div class="data-line"><span>motors only (${motorsUsed.length} of ${jointRowsForCost.length} joints)</span><span>$${totalCost.toFixed(2)}</span></div>`;
+      html += '<div class="motor-info" style="margin-top:6px;">Excludes structure, electronics, and assembly - motors only, approximate pricing (see each motor\'s note for details).</div>';
+    }
+
     resultsEmpty.style.display = 'none';
     resultsContent.style.display = 'block';
     resultsContent.innerHTML = html;
@@ -834,11 +1559,62 @@ document.getElementById('arm-form').addEventListener('submit', async (e) => {
     runBtn.textContent = 'Run analysis';
   }
 });
+document.getElementById('predict-fast-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('predict-fast-btn');
+  const status = document.getElementById('predict-fast-status');
+
+  btn.disabled = true;
+  btn.textContent = 'Predicting...';
+  status.textContent = '';
+
+  const config = buildConfig();
+
+  try {
+    const response = await authFetch('/predict/lift_test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail, null, 2);
+      status.innerHTML = `<div class="error-box">Prediction failed (${response.status}):<br>${detail}</div>`;
+      return;
+    }
+
+    const overallLabel = data.overall_predicted_passes
+      ? '<span style="color:#2ecc71;">likely PASSES</span>'
+      : '<span style="color:#e74c3c;">likely FAILS</span>';
+
+    let html = `<div style="margin-bottom:6px;">ML estimate: ${overallLabel} (instant, no real simulation run)</div>`;
+    for (const joint of Object.keys(data)) {
+      if (joint === 'overall_predicted_passes' || joint === 'note') continue;
+      const j = data[joint];
+      const passLabel = j.predicted_passes ? 'PASS' : 'FAIL';
+      const sagNote = j.predicted_passes
+        ? ''
+        : ` (est. sag ${j.predicted_sag_deg}&deg;, confidence: ${j.sag_confidence})`;
+      html += `<div>${joint}: ${passLabel}, torque &approx; ${j.predicted_max_applied_torque_nm} Nm${sagNote}</div>`;
+    }
+    html += `<div style="margin-top:6px; opacity:0.7;">${data.note}</div>`;
+
+    status.innerHTML = html;
+  } catch (err) {
+    status.innerHTML = `<div class="error-box">Could not reach the API: ${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Predict (fast, ML estimate)';
+  }
+});
 </script>
 
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+const stlLoader = new STLLoader();
 
 const container = document.getElementById('viewer-canvas-container');
 const emptyNote = document.getElementById('viewer-empty-note');
@@ -961,21 +1737,40 @@ function buildArm(config, torqueCheck) {
     axisVector.normalize();
     jointGroups.push({ group: jointGroup, axisVector, name: joint.name });
 
-    const radius = link.radius_m || 0.03;
-    const geometry = new THREE.CylinderGeometry(radius, radius, link.length_m, 16);
     const material = new THREE.MeshStandardMaterial({
       color: colorForJoint(joint.name, torqueCheck),
       metalness: 0.2,
       roughness: 0.5,
     });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.rotation.x = Math.PI / 2;
-    mesh.position.set(0, 0, link.length_m / 2);
-    jointGroup.add(mesh);
 
-    const hingeGeom = new THREE.SphereGeometry(radius * 1.3, 12, 12);
-    const hingeMesh = new THREE.Mesh(hingeGeom, new THREE.MeshStandardMaterial({ color: 0xDCE8F5 }));
-    jointGroup.add(hingeMesh);
+    if (link.mesh_id) {
+      const placeholderGeom = new THREE.SphereGeometry(0.02, 8, 8);
+      const placeholderMesh = new THREE.Mesh(placeholderGeom, material);
+      jointGroup.add(placeholderMesh);
+
+      stlLoader.load(
+        `/meshes/${link.mesh_id}/file`,
+        (geometry) => {
+          jointGroup.remove(placeholderMesh);
+          placeholderMesh.geometry.dispose();
+          const meshObject = new THREE.Mesh(geometry, material);
+          jointGroup.add(meshObject);
+        },
+        undefined,
+        (error) => { console.error('Failed to load mesh geometry for', link.name, error); }
+      );
+    } else {
+      const radius = link.radius_m || 0.03;
+      const geometry = new THREE.CylinderGeometry(radius, radius, link.length_m, 16);
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(0, 0, link.length_m / 2);
+      jointGroup.add(mesh);
+
+      const hingeGeom = new THREE.SphereGeometry(radius * 1.3, 12, 12);
+      const hingeMesh = new THREE.Mesh(hingeGeom, new THREE.MeshStandardMaterial({ color: 0xDCE8F5 }));
+      jointGroup.add(hingeMesh);
+    }
 
     currentParent = jointGroup;
   });
@@ -1036,6 +1831,7 @@ animateBtn.addEventListener('click', () => {
   viewerHint.textContent = 'Playing back the recorded lift test motion (loops).';
 });
 
+Object.defineProperty(window, 'scene', { get: () => scene, configurable: true });
 window.renderArmViewer = renderArmViewer;
 </script>
 

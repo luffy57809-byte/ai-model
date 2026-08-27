@@ -1,29 +1,48 @@
 """
 Converts an ArmConfig into a valid URDF string.
 
-This is the core of Phase 1. Everything downstream (simulation, AI reports)
-depends on this producing physically valid URDF - wrong inertia values here
-will silently produce wrong simulation results later, so we compute real
-cylinder inertia rather than making something up.
+Everything downstream (simulation, AI reports) depends on this producing
+physically valid URDF - wrong inertia values here will silently produce
+wrong simulation results later.
+
+MESH LINKS: if a Link has mesh_id set, this generator emits a <mesh>
+geometry (referencing the stored file on disk) instead of a <cylinder>,
+and uses the link's real computed inertia_* fields and com_offset_m
+instead of the analytic cylinder formula and length/2 assumption. See
+schema.py's Link docstring and analysis/mesh_processor.py for how those
+fields get populated.
 """
 
+from pathlib import Path
+
 from src.urdf_generator.schema import ArmConfig, Link, Joint
+
+MESH_STORAGE_DIR = Path("data/meshes")
 
 
 def _cylinder_inertia(mass: float, radius: float, length: float) -> tuple[float, float, float]:
     """
     Moment of inertia for a solid cylinder about its own center of mass,
     aligned along its length (the z-axis of the link frame).
-
-    ixx = iyy = (1/12) * m * (3r^2 + l^2)
-    izz = (1/2) * m * r^2
     """
     ixx = iyy = (1.0 / 12.0) * mass * (3 * radius**2 + length**2)
     izz = 0.5 * mass * radius**2
     return ixx, iyy, izz
 
 
+def _mesh_file_path(mesh_id: str) -> str:
+    """Absolute path to a stored mesh file - avoids relative-path resolution
+    headaches when PyBullet loads the URDF from a temp directory."""
+    return str((MESH_STORAGE_DIR / f"{mesh_id}.stl").resolve())
+
+
 def _link_xml(link: Link) -> str:
+    if link.is_mesh_based():
+        return _mesh_link_xml(link)
+    return _cylinder_link_xml(link)
+
+
+def _cylinder_link_xml(link: Link) -> str:
     ixx, iyy, izz = _cylinder_inertia(link.mass_kg, link.radius_m, link.length_m)
     half = link.length_m / 2.0
     return f"""  <link name="{link.name}">
@@ -42,14 +61,36 @@ def _link_xml(link: Link) -> str:
     <inertial>
       <origin xyz="0 0 {half}" rpy="0 0 0"/>
       <mass value="{link.mass_kg}"/>
-      <inertia ixx="{ixx:.6f}" ixy="0" ixz="0" iyy="{iyy:.6f}" iyz="0" izz="{izz:.6f}"/>
+      <inertia ixx="{ixx:.8f}" ixy="0" ixz="0" iyy="{iyy:.8f}" iyz="0" izz="{izz:.8f}"/>
+    </inertial>
+  </link>
+"""
+
+
+def _mesh_link_xml(link: Link) -> str:
+    mesh_path = _mesh_file_path(link.mesh_id)
+    com_z = link.com_offset_m
+    return f"""  <link name="{link.name}">
+    <visual>
+      <geometry>
+        <mesh filename="{mesh_path}"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="{mesh_path}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 {com_z}" rpy="0 0 0"/>
+      <mass value="{link.mass_kg}"/>
+      <inertia ixx="{link.inertia_ixx:.8f}" ixy="{link.inertia_ixy:.8f}" ixz="{link.inertia_ixz:.8f}" iyy="{link.inertia_iyy:.8f}" iyz="{link.inertia_iyz:.8f}" izz="{link.inertia_izz:.8f}"/>
     </inertial>
   </link>
 """
 
 
 def _joint_xml(joint: Joint, parent_length: float) -> str:
-    # Child joint origin sits at the end (top) of the parent link.
     limit_xml = ""
     if joint.joint_type.value in ("revolute", "prismatic"):
         lower = joint.lower_limit_rad if joint.lower_limit_rad is not None else -3.14159
@@ -78,7 +119,6 @@ def generate_urdf(config: ArmConfig) -> str:
 
     parts = [f'<?xml version="1.0"?>\n<robot name="{config.name}">\n']
 
-    # Fixed base link so the arm has something to be mounted on in pybullet.
     parts.append(
         '  <link name="base_link">\n'
         '    <visual><geometry><box size="0.15 0.15 0.05"/></geometry></visual>\n'
@@ -133,5 +173,11 @@ def validate_config(config: ArmConfig) -> list[str]:
         if joint.joint_type.value in ("revolute", "prismatic"):
             if joint.lower_limit_rad is None or joint.upper_limit_rad is None:
                 errors.append(f"Joint '{joint.name}' is {joint.joint_type.value} but missing limits.")
+
+    for link in config.links:
+        if link.is_mesh_based():
+            mesh_path = MESH_STORAGE_DIR / f"{link.mesh_id}.stl"
+            if not mesh_path.exists():
+                errors.append(f"Link '{link.name}' references mesh_id '{link.mesh_id}' but no such mesh file exists.")
 
     return errors

@@ -1,15 +1,17 @@
 """
 Turns the real numeric output of the torque check + lift test into a
-plain-English engineering report using the Gemini API (free tier - no
-billing required).
+plain-English engineering report.
+
+Uses a local Ollama model (llama3.2) rather than a cloud API - no
+account/API key required. Same grounding rules as before: only reference
+provided numbers, never fabricate, explain failures concretely.
 """
 
 import json
 import os
-from google import genai
-from google.genai import types
 
-MODEL = "gemini-3.5-flash"
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+MODEL = os.environ.get("REPORT_MODEL", "llama3.2")
 
 SYSTEM_PROMPT = """You are a robotics engineering assistant writing a design
 review for a robotic arm. You will be given real, already-computed physics
@@ -44,20 +46,39 @@ def _build_user_message(config_name: str, torque_check: list[dict], lift_test: d
 
 
 def generate_report(config_name: str, torque_check: list[dict], lift_test: dict | None = None) -> str:
-    if not os.environ.get("GEMINI_API_KEY"):
+    try:
+        import requests
+    except ImportError as exc:
         raise RuntimeError(
-            "GEMINI_API_KEY is not set. Get a free key (no credit card) at "
-            "https://aistudio.google.com/apikey, then run "
-            "`export GEMINI_API_KEY=...` in your terminal and restart the server."
-        )
+            "The 'requests' package is not installed - report generation "
+            "is disabled in this environment (it's an optional dependency, "
+            "left out of the production image to keep it lean)."
+        ) from exc
 
-    client = genai.Client()
+    try:
+        health_check = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        health_check.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Could not reach Ollama at {OLLAMA_URL} - is `ollama serve` running? "
+            f"Original error: {exc}"
+        ) from exc
+
     user_message = _build_user_message(config_name, torque_check, lift_test)
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=user_message,
-        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-    )
+    try:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={
+                "model": MODEL,
+                "system": SYSTEM_PROMPT,
+                "prompt": user_message,
+                "stream": False,
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Ollama request failed: {exc}") from exc
 
-    return response.text
+    return response.json()["response"]

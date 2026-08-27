@@ -1,22 +1,18 @@
 """
 Dynamic "hold horizontal, fully extended, under payload" test.
 
-This is the dynamic counterpart to analysis/torque_check.py's static
-calculation. Same worst-case pose (arm fully extended, horizontal,
-payload at the tip) - but here PyBullet's actual motor control and
-gravity decide what happens, instead of a hand-derived equation.
+CRITICAL MESH-LINK FIX: PyBullet's URDF loader silently IGNORES the
+<inertia> values we write for mesh-collision-geometry links, recomputing
+its own instead (confirmed: two URDFs differing only in specified inertia
+produced identical simulated dynamics). Fix: after loadURDF, force-override
+via p.changeDynamics(mass=..., localInertiaDiagonal=...) using our real,
+trimesh-verified values.
 
-How the horizontal pose is achieved: the URDF chain extends along its
-own local z-axis by construction (see generator.py). We mount the base
-rotated 90 degrees about Y, so that local-z-forward becomes
-horizontal in world space. With all joint targets held at 0 (i.e.
-"stay straight"), this reproduces the same fully-extended-horizontal
-pose the static check assumes - so the two are directly comparable.
-
-Each joint is driven with PyBullet's built-in POSITION_CONTROL, capped
-at that joint's real max_torque_nm as the force limit. If the motor is
-strong enough, it holds near 0 rad. If it's undersized, gravity wins and
-the joint sags - which is exactly the failure mode we want to catch.
+KNOWN LIMITATION: changeDynamics() has no orientation parameter in this
+PyBullet version, so this only correctly handles near-diagonal inertia
+tensors (the common case). A mesh with a genuinely tilted principal-axis
+mass distribution raises MeshDynamicsError rather than silently producing
+wrong dynamics. The static torque_check is unaffected either way.
 """
 
 import math
@@ -28,6 +24,33 @@ from src.urdf_generator.schema import ArmConfig
 from src.urdf_generator.generator import generate_urdf
 
 
+class MeshDynamicsError(ValueError):
+    """Raised when a mesh link's inertia can't be safely applied in PyBullet."""
+
+
+def _has_significant_off_diagonal_terms(link, relative_threshold: float = 0.01) -> bool:
+    diag_scale = max(abs(link.inertia_ixx), abs(link.inertia_iyy), abs(link.inertia_izz), 1e-12)
+    off_diag_max = max(abs(link.inertia_ixy), abs(link.inertia_ixz), abs(link.inertia_iyz))
+    return (off_diag_max / diag_scale) > relative_threshold
+
+
+def _apply_real_mesh_dynamics(robot_id: int, link_index: int, link) -> None:
+    if _has_significant_off_diagonal_terms(link):
+        raise MeshDynamicsError(
+            f"Link '{link.name}' has a significantly off-diagonal inertia tensor "
+            f"(a tilted principal-axis mass distribution). This PyBullet version's "
+            f"changeDynamics() can't correctly represent that via localInertiaDiagonal "
+            f"alone, so the dynamic lift test would silently misassign inertia to the "
+            f"wrong axes. The static torque check is unaffected. Consider reorienting "
+            f"the mesh, or skip the dynamic lift test for this design."
+        )
+    p.changeDynamics(
+        robot_id, link_index,
+        mass=link.mass_kg,
+        localInertiaDiagonal=(link.inertia_ixx, link.inertia_iyy, link.inertia_izz),
+    )
+
+
 def run_lift_test(
     config: ArmConfig,
     sim_seconds: float = 3.0,
@@ -35,22 +58,6 @@ def run_lift_test(
     record_trajectory: bool = False,
     trajectory_fps: int = 30,
 ) -> dict:
-    """
-    Returns:
-      {
-        "joint_results": [...],
-        "overall_passes": bool,
-        "trajectory": {                    # only present if record_trajectory=True
-          "fps": int,
-          "joint_order": [str, ...],       # matches config.joints order
-          "frames": [[angle_rad, ...], ...]  # one inner list per joint, per frame
-        }
-      }
-
-    trajectory is meant for playback in a 3D viewer, not analysis - it's
-    sampled at trajectory_fps (default 30), not the physics engine's
-    internal 240Hz step rate, to keep the payload small.
-    """
     urdf_string = generate_urdf(config)
 
     physics_client = p.connect(p.DIRECT)
@@ -66,16 +73,13 @@ def run_lift_test(
 
         try:
             robot_id = p.loadURDF(
-                urdf_path,
-                basePosition=[0, 0, 0.5],
-                baseOrientation=base_orientation,
-                useFixedBase=True,
+                urdf_path, basePosition=[0, 0, 0.5],
+                baseOrientation=base_orientation, useFixedBase=True,
             )
         finally:
             os.unlink(urdf_path)
 
         num_joints = p.getNumJoints(robot_id)
-
         actuated_joint_indices = []
         for i in range(num_joints):
             joint_info = p.getJointInfo(robot_id, i)
@@ -85,16 +89,21 @@ def run_lift_test(
                 actuated_joint_indices.append((i, joint_name))
 
         config_joint_by_name = {j.name: j for j in config.joints}
+        config_link_by_name = {l.name: l for l in config.links}
         max_torque_tracker = {idx: 0.0 for idx, _ in actuated_joint_indices}
+
+        for link_index in range(num_joints):
+            link_info = p.getJointInfo(robot_id, link_index)
+            link_name = link_info[12].decode("utf-8")
+            link_config = config_link_by_name.get(link_name)
+            if link_config is not None and link_config.is_mesh_based():
+                _apply_real_mesh_dynamics(robot_id, link_index, link_config)
 
         for idx, name in actuated_joint_indices:
             cfg_joint = config_joint_by_name[name]
             p.setJointMotorControl2(
-                bodyUniqueId=robot_id,
-                jointIndex=idx,
-                controlMode=p.POSITION_CONTROL,
-                targetPosition=0.0,
-                force=cfg_joint.max_torque_nm,
+                bodyUniqueId=robot_id, jointIndex=idx, controlMode=p.POSITION_CONTROL,
+                targetPosition=0.0, force=cfg_joint.max_torque_nm,
                 maxVelocity=cfg_joint.max_velocity_rad_s,
             )
 
@@ -113,14 +122,12 @@ def run_lift_test(
                 applied_torque = abs(p.getJointState(robot_id, idx)[3])
                 if applied_torque > max_torque_tracker[idx]:
                     max_torque_tracker[idx] = applied_torque
-
             if record_trajectory and step % record_every == 0:
                 frame = [p.getJointState(robot_id, idx)[0] for idx in ordered_indices]
                 trajectory_frames.append(frame)
 
         joint_results = []
         overall_passes = True
-
         for idx, name in actuated_joint_indices:
             cfg_joint = config_joint_by_name[name]
             final_angle_rad = p.getJointState(robot_id, idx)[0]
@@ -128,29 +135,19 @@ def run_lift_test(
             sag_deg = abs(final_angle_deg)
             passes = sag_deg <= sag_tolerance_deg
             overall_passes = overall_passes and passes
-
             joint_results.append({
-                "joint_name": name,
-                "target_angle_deg": 0.0,
-                "final_angle_deg": round(final_angle_deg, 2),
-                "sag_deg": round(sag_deg, 2),
+                "joint_name": name, "target_angle_deg": 0.0,
+                "final_angle_deg": round(final_angle_deg, 2), "sag_deg": round(sag_deg, 2),
                 "max_applied_torque_nm": round(max_torque_tracker[idx], 3),
-                "rated_max_torque_nm": cfg_joint.max_torque_nm,
-                "passes": passes,
+                "rated_max_torque_nm": cfg_joint.max_torque_nm, "passes": passes,
             })
 
-        result = {
-            "joint_results": joint_results,
-            "overall_passes": overall_passes,
-        }
-
+        result = {"joint_results": joint_results, "overall_passes": overall_passes}
         if record_trajectory:
             result["trajectory"] = {
-                "fps": trajectory_fps,
-                "joint_order": [j.name for j in config.joints],
+                "fps": trajectory_fps, "joint_order": [j.name for j in config.joints],
                 "frames": trajectory_frames,
             }
-
         return result
     finally:
         p.disconnect(physics_client)

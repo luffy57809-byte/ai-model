@@ -1,0 +1,37 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+
+# Local dev/test artifacts - not part of the app itself
+# TEMPORARY: data/models/*.joblib IS included (needed for /predict/lift_test
+# to work until real model storage/loading is built as its own phase).
+# data/meshes uploads and standalone test files are still excluded.
+data/meshes/*
+*.pkl
+*.step
+*.stl
+!data/models/nlink_sag_classifier.joblib
+!data/models/nlink_sag_regressor.joblib
+!data/models/nlink_torque_model.joblib
+
+# Virtual environments
+venv/
+.venv/
+/tmp/
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# Dev-only dependency file (production image uses requirements.txt only)
+requirements-dev.txt
+
+# Local docs/env files not needed in the image
+README.md
+.env

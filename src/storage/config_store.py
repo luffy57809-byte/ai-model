@@ -1,28 +1,27 @@
 """
-Simple file-based persistence for arm designs - one JSON file per saved
-design under data/saved_designs/. No database, no server-side state beyond
-the filesystem: appropriate for a solo, local-first tool.
+Database-backed, per-user persistence for arm designs.
 
 Only the ArmConfig (the design) is saved - not analysis results. Torque
 checks and lift tests are always recomputed live from the current code,
-so a saved design never goes stale relative to bug fixes or model changes
-in the analysis itself.
+so a saved design never goes stale relative to bug fixes or model
+changes in the analysis itself.
 
-SECURITY NOTE: config.name is user-supplied and is used to build a file
-path. Without sanitization, a name like "../../etc/passwd" could write
-or read outside the intended directory. _slugify() strips everything
-except alphanumerics, underscore, and hyphen specifically to prevent this -
-don't relax that pattern without re-checking path traversal.
+SECURITY NOTE: config.name is user-supplied and becomes part of the
+slug (composite primary key with user_id). _slugify() strips everything
+except alphanumerics, underscore, and hyphen.
+
+PER-USER SCOPING: every function now takes a user_id, and all queries
+filter by it - a user can only see, load, or delete their OWN saved
+designs. slug alone is no longer globally unique (two users can each
+have a design named "my_arm"); the real identity is (slug, user_id).
 """
 
+import datetime
 import json
 import re
-import datetime
-from pathlib import Path
 
+from src.storage.database import SessionLocal, SavedDesign
 from src.urdf_generator.schema import ArmConfig
-
-STORAGE_DIR = Path("data/saved_designs")
 
 
 def _slugify(name: str) -> str:
@@ -31,55 +30,67 @@ def _slugify(name: str) -> str:
     return slug[:100]
 
 
-def _path_for(name: str) -> Path:
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    return STORAGE_DIR / f"{_slugify(name)}.json"
-
-
-def save_design(config: ArmConfig) -> dict:
+def save_design(config: ArmConfig, user_id: str) -> dict:
     slug = _slugify(config.name)
-    path = _path_for(config.name)
-    saved_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    saved_at = datetime.datetime.now(datetime.timezone.utc)
 
-    payload = {
-        "config": config.model_dump(),
-        "saved_at": saved_at,
-    }
-    path.write_text(json.dumps(payload, indent=2))
+    session = SessionLocal()
+    try:
+        existing = session.get(SavedDesign, (slug, user_id))
+        if existing:
+            existing.name = config.name
+            existing.config_json = config.model_dump_json()
+            existing.saved_at = saved_at
+        else:
+            session.add(SavedDesign(
+                slug=slug, user_id=user_id, name=config.name,
+                config_json=config.model_dump_json(), saved_at=saved_at,
+            ))
+        session.commit()
+    finally:
+        session.close()
 
-    return {"name": config.name, "slug": slug, "saved_at": saved_at}
-
-
-def list_designs() -> list[dict]:
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    designs = []
-    for path in STORAGE_DIR.glob("*.json"):
-        try:
-            data = json.loads(path.read_text())
-            designs.append({
-                "name": data["config"]["name"],
-                "slug": path.stem,
-                "saved_at": data.get("saved_at"),
-            })
-        except (json.JSONDecodeError, KeyError):
-            continue
-    designs.sort(key=lambda d: d["saved_at"] or "", reverse=True)
-    return designs
+    return {"name": config.name, "slug": slug, "saved_at": saved_at.isoformat()}
 
 
-def load_design(slug: str) -> ArmConfig:
+def list_designs(user_id: str) -> list[dict]:
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(SavedDesign)
+            .filter(SavedDesign.user_id == user_id)
+            .order_by(SavedDesign.saved_at.desc())
+            .all()
+        )
+        return [
+            {"name": row.name, "slug": row.slug, "saved_at": row.saved_at.isoformat() if row.saved_at else None}
+            for row in rows
+        ]
+    finally:
+        session.close()
+
+
+def load_design(slug: str, user_id: str) -> ArmConfig:
     safe_slug = _slugify(slug)
-    path = STORAGE_DIR / f"{safe_slug}.json"
-    if not path.exists():
-        raise FileNotFoundError(f"No saved design found for '{slug}'")
-    data = json.loads(path.read_text())
-    return ArmConfig(**data["config"])
+    session = SessionLocal()
+    try:
+        row = session.get(SavedDesign, (safe_slug, user_id))
+        if row is None:
+            raise FileNotFoundError(f"No saved design found for '{slug}'")
+        return ArmConfig(**json.loads(row.config_json))
+    finally:
+        session.close()
 
 
-def delete_design(slug: str) -> bool:
+def delete_design(slug: str, user_id: str) -> bool:
     safe_slug = _slugify(slug)
-    path = STORAGE_DIR / f"{safe_slug}.json"
-    if path.exists():
-        path.unlink()
+    session = SessionLocal()
+    try:
+        row = session.get(SavedDesign, (safe_slug, user_id))
+        if row is None:
+            return False
+        session.delete(row)
+        session.commit()
         return True
-    return False
+    finally:
+        session.close()

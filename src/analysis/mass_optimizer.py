@@ -2,34 +2,29 @@
 Mass-minimization optimizer: finds the lightest possible link masses that
 still keep every joint within a safety margin of its rated torque.
 
-WHY THIS IS A REAL LINEAR PROGRAM, NOT A HEURISTIC:
-torque_check.py's required-torque equation is linear in link mass - each
-link's mass is multiplied by a fixed distance factor (which depends only
-on link lengths, which we're NOT optimizing here). So:
-
-    minimize   sum(link masses)
-    subject to  required_torque(joint_i) <= max_torque_nm(joint_i) * (1 - safety_margin)   for every joint i
-                link_mass >= min_mass_kg                                                    for every link
-
-...is an exact linear program, solvable with scipy.optimize.linprog. There's
-no approximation or guessing involved in the math itself.
-
-IMPORTANT MODELING LIMITATION - read this before trusting the output:
-this model has no relationship between a link's mass and its physical
-size (length/radius) or structural strength. Nothing stops the optimizer
-from suggesting a link be built at min_mass_kg even if that's not
-physically realizable for that link's dimensions and material. Treat the
-output as "how much mass could theoretically be removed given only the
-motors' torque limits", not as a manufacturable final design. min_mass_kg
-is your one dial for encoding "don't go lighter than this is physically
-sane" - set it thoughtfully.
+MESH LINKS: mass is treated as a free variable, but the distance-to-COM
+factor is fixed at the mesh's originally-computed com_offset_m. This is
+actually correct, not an approximation - a rigid body's COM location is a
+purely geometric property, independent of its uniform density/mass. What
+IS a real limitation: the mesh's original inertia_* values (used only by
+the DYNAMIC simulation, not this static optimizer) won't automatically
+rescale - re-upload with the new target mass before running a dynamic
+lift test on an optimized design.
 """
 
 from scipy.optimize import linprog
 
-from src.urdf_generator.schema import ArmConfig
+from src.urdf_generator.schema import ArmConfig, Link
 
 GRAVITY = 9.81
+
+
+def _distance_to_com(link: Link) -> float:
+    """Kept in sync with torque_check.py's identical logic - see that
+    module's docstring for the mesh-vs-cylinder distinction."""
+    if link.is_mesh_based():
+        return link.com_offset_m
+    return link.length_m / 2.0
 
 
 def optimize_link_masses(
@@ -37,12 +32,6 @@ def optimize_link_masses(
     safety_margin: float = 0.2,
     min_mass_kg: float = 0.1,
 ) -> dict:
-    """
-    safety_margin: e.g. 0.2 means every joint must have at least 20% torque
-                   margin after optimization (required <= 80% of rated).
-    min_mass_kg: floor on any individual link's mass - see the module
-                 docstring's limitation note before relying on this.
-    """
     n = len(config.links)
     original_total_mass = sum(link.mass_kg for link in config.links)
 
@@ -70,7 +59,7 @@ def optimize_link_masses(
         cumulative_distance = 0.0
         for k in range(i, n):
             link_k = config.links[k]
-            distance_to_com = cumulative_distance + (link_k.length_m / 2.0)
+            distance_to_com = cumulative_distance + _distance_to_com(link_k)
             row[k] = GRAVITY * distance_to_com
             cumulative_distance += link_k.length_m
 
@@ -105,11 +94,18 @@ def optimize_link_masses(
 
     links_report = []
     for i, link in enumerate(config.links):
-        links_report.append({
+        entry = {
             "name": link.name,
             "original_mass_kg": link.mass_kg,
             "optimized_mass_kg": round(float(optimized_masses[i]), 4),
-        })
+        }
+        if link.is_mesh_based():
+            entry["note"] = (
+                "Mesh-based link: re-upload this mesh with the optimized "
+                "target mass to get correct inertia values before running "
+                "a dynamic lift test on this result."
+            )
+        links_report.append(entry)
 
     return {
         "feasible": True,
